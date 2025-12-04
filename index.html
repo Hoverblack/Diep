@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mini Diep-like</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div class="app-shell">
+        <main class="play-area">
+            <canvas id="gameCanvas"></canvas>
+            <div class="hud">
+                <div class="hud-line">
+                    <span>Niveau</span>
+                    <strong id="levelDisplay">1</strong>
+                </div>
+                <div class="hud-line">
+                    <span>Vie</span>
+                    <strong id="hpDisplay">100 / 100</strong>
+                </div>
+                <div class="hud-line">
+                    <span>XP</span>
+                    <strong id="xpText">0 / 100</strong>
+                </div>
+                <div class="xp-bar">
+                    <div id="xpFill" class="xp-fill"></div>
+                </div>
+                <div class="hud-line">
+                    <span>Boss</span>
+                    <strong id="bossTimerText">--</strong>
+                </div>
+                <div class="boss-bar">
+                    <div id="bossFill" class="boss-fill"></div>
+                </div>
+                <button id="pauseButton" class="hud-button">Pause</button>
+            </div>
+        </main>
+        <aside class="upgrade-panel">
+            <header>
+                <h2>Améliorations</h2>
+                <p>Points disponibles : <span id="upgradePoints">0</span></p>
+            </header>
+            <section class="difficulty-panel">
+                <div class="difficulty-header">
+                    <span>Difficulté</span>
+                    <strong id="difficultyLabel">Moyen</strong>
+                </div>
+                <input
+                    type="range"
+                    id="difficultyRange"
+                    min="0"
+                    max="7"
+                    step="1"
+                    value="2"
+                />
+                <div class="difficulty-scale">
+                    <span>Jeu d'enfant</span>
+                    <span>Hardcore</span>
+                </div>
+            </section>
+            <div id="upgradeList" class="upgrade-list"></div>
+            <p class="tip">Déplace-toi avec ZQSD, vise avec la souris. Les tirs sont automatiques.</p>
+        </aside>
+    </div>
+    <div id="classOverlay" class="class-overlay hidden">
+        <div class="class-modal">
+            <h3>Nouvelles classes</h3>
+            <p id="classTierLabel">Niveau 10 atteint</p>
+            <div id="classOptions" class="class-options"></div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
