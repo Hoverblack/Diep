@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mini Diep-IO v4.9.9</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div class="app-shell">
+        <main class="play-area">
+            <canvas id="gameCanvas"></canvas>
+            <div class="hud">
+                <div class="hud-line">
+                    <span>Niveau</span>
+                    <strong id="levelDisplay">1</strong>
+                </div>
+                <div class="hud-line">
+                    <span>Vie</span>
+                    <strong id="hpDisplay">100 / 100</strong>
+                </div>
+                <div class="hud-line">
+                    <span>XP</span>
+                    <strong id="xpText">0 / 100</strong>
+                </div>
+                <div class="xp-bar">
+                    <div id="xpFill" class="xp-fill"></div>
+                </div>
+                <div class="hud-line">
+                    <span>Boss</span>
+                    <strong id="bossTimerText">--</strong>
+                </div>
+                <div class="boss-bar">
+                    <div id="bossFill" class="boss-fill"></div>
+                </div>
+                <button id="pauseButton" class="hud-button">Pause</button>
+            </div>
+        </main>
+        <aside class="upgrade-panel">
+            <header>
+                <h2>Améliorations</h2>
+                <p>Points disponibles : <span id="upgradePoints">0</span></p>
+            </header>
+            <section class="difficulty-panel">
+                <div class="difficulty-header">
+                    <span>Difficulté</span>
+                    <strong id="difficultyLabel">Moyen</strong>
+                </div>
+                <input
+                    type="range"
+                    id="difficultyRange"
+                    min="0"
+                    max="7"
+                    step="1"
+                    value="2"
+                />
+                <div class="difficulty-scale">
+                    <span>Jeu d'enfant</span>
+                    <span>Hardcore</span>
+                </div>
+            </section>
+            <div id="upgradeList" class="upgrade-list"></div>
+            <p class="tip">Déplace-toi avec ZQSD, vise avec la souris. Les tirs sont automatiques.</p>
+        </aside>
+    </div>
+    <div id="menuOverlay" class="full-overlay visible">
+        <div class="modal">
+            <header class="modal-header">
+                <div>
+                    <p class="eyebrow">Mini Diep-like — v4.9</p>
+                    <h1>Démarrer une partie</h1>
+                    <p class="muted">Choisis ton mode avant de te lancer.</p>
+                </div>
+                <button id="showControlsButton" class="ghost-button">Touches & aides</button>
+            </header>
+            <section class="modal-section">
+                <div class="section-header">
+                    <h3>Difficulté</h3>
+                    <span id="menuDifficultyLabel" class="pill">Moyen</span>
+                </div>
+                <input
+                    type="range"
+                    id="menuDifficultyRange"
+                    min="0"
+                    max="7"
+                    step="1"
+                    value="2"
+                />
+                <div class="difficulty-scale">
+                    <span>Jeu d'enfant</span>
+                    <span>Hardcore</span>
+                </div>
+            </section>
+            <section class="modal-section">
+                <div class="section-header">
+                    <h3>Mode de partie</h3>
+                    <p class="muted small">
+                        Verrouille la difficulté ou autorise les changements en plein jeu.
+                    </p>
+                </div>
+                <div class="pill-toggle" id="difficultyModeToggle">
+                    <button data-mode="locked" class="active">Difficulté verrouillée</button>
+                    <button data-mode="flex">Modifiable en jeu</button>
+                </div>
+            </section>
+            <section class="modal-section">
+                <label class="checkbox-row">
+                    <input type="checkbox" id="trackpadModeToggle" />
+                    <span>
+                        Mode trackpad — vise avec les flèches du clavier (↑ ↓ ← →)
+                    </span>
+                </label>
+            </section>
+            <section class="modal-section patch-notes">
+                <div class="section-header">
+                    <h3>Patch v4.9.9</h3>
+                    <span class="pill">Notes</span> 
+                </div>
+                <ul class="patch-list muted">
+                    <li>Spawn réduit sur les difficultés basses, bosses plus résistants.</li>
+                    <li>Tireurs fortement raréfiés en difficultés basses; nouveaux ennemis Faucheur/Obélisque.</li>
+                    <li>Nouvelle amélioration Résistance + Perforation; orbes soin, drones temporaires.</li>
+                    <li>Orbes de maîtrise (lvl 25+) boostent PV/Dégâts/Résistance/Perforation.</li>
+                    <li>Points d'amélioration à chaque niveau; classes proposées tous les 5 niveaux.</li>
+                    <li>Nouvelles améliorations avancées (Impact, Overclock, Maîtrise XP étendue). Destroyer garde ses grosses balles.</li>
+                    <li>Octo/chemin tank progresse: 4 canons lvl20, 6 canons lvl25, 8 canons lvl30, jusqu'à 12 tirs au lvl40.</li>
+                    <li>Classe Overseer (traçants + mines), skin rare fait gagner un niveau immédiat.</li>
+                </ul>
+            </section>
+            <footer class="modal-actions">
+                <button id="startGameButton" class="primary-button">Lancer la partie</button>
+            </footer>
+        </div>
+    </div>
+    <div id="gameOverOverlay" class="full-overlay hidden">
+        <div class="modal small">
+            <h2>😹😹La loose t'es trop nul😹😹</h2>
+            <p class="muted">Reviens au menu ou relance avec les mêmes options.</p>
+            <div class="modal-actions">
+                <button id="restartButton" class="primary-button">Relancer</button>
+                <button id="returnMenuButton" class="ghost-button">Retour menu</button>
+            </div>
+        </div>
+    </div>
+    <div id="controlsOverlay" class="full-overlay hidden">
+        <div class="modal small">
+            <header class="modal-header">
+                <h2>Touches & aides</h2>
+                <button id="closeControlsButton" class="ghost-button">Fermer</button>
+            </header>
+            <ul class="controls-list">
+                <li><strong>ZQSD</strong> : déplacement</li>
+                <li><strong>Souris</strong> : viser (par défaut)</li>
+                <li><strong>↑ ↓ ← →</strong> : viser en mode trackpad</li>
+                <li><strong>Espace</strong> : pause/reprendre</li>
+            </ul>
+        </div>
+    </div>
+    <div id="classOverlay" class="class-overlay hidden">
+        <div class="class-modal">
+            <h3>Nouvelles classes</h3>
+            <p id="classTierLabel">Niveau 10 atteint</p>
+            <div id="classOptions" class="class-options"></div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
