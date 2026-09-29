@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NEON DIEP v5.2</title>
+    <title>NEON DIEP v5.3</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
         rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=5.2" />
+    <link rel="stylesheet" href="style.css?v=5.3" />
 </head>
 <body>
     <div class="app-shell">
@@ -97,9 +97,9 @@
         <div class="crt" aria-hidden="true"></div>
         <div class="modal title-modal">
             <header class="title-header">
-                <p class="eyebrow">Mini Diep-like · v5.2</p>
+                <p class="eyebrow">Mini Diep-like · v5.3</p>
                 <h1 class="logo" data-text="NEON DIEP">NEON DIEP</h1>
-                <p class="muted">8 secteurs, des boss, puis le mode infini.</p>
+                <p class="muted">8 secteurs, une arène secrète, puis le mode infini.</p>
                 <p class="best-line">Record : <strong id="menuBestDisplay">0</strong></p>
             </header>
             <div class="title-actions">
@@ -109,6 +109,7 @@
                 <button id="startGameButton" class="primary-button">
                     Nouvelle partie <kbd>N</kbd>
                 </button>
+                <button id="challengeButton" class="ghost-button challenge-button">Défi : Prisme Noir</button>
                 <button id="showControlsButton" class="ghost-button">Touches &amp; aides</button>
             </div>
             <section class="modal-section">
@@ -142,6 +143,15 @@
                     <span>Mode trackpad : viser avec les flèches, bouger avec ZQSD</span>
                 </label>
             </section>
+            <details class="modal-section patch-notes">
+                <summary>Patch v5.3 : l'Arène Prismatique</summary>
+                <ul class="patch-list muted">
+                    <li>Nouveau boss : le Prisme Noir, un Prisme en furie aux lasers arc-en-ciel. Rosaces qui tournent et s'inversent, tenailles qui se referment, grilles depuis les bords, supernova à chaque phase et deux éclats satellites en fureur.</li>
+                    <li>Il vit dans l'Arène Prismatique, après le secteur 8 : aucun autre ennemi n'y apparaît, avec une intro où la lumière converge pour le former.</li>
+                    <li>Bouton « Défi : Prisme Noir » au menu pour l'affronter tout de suite avec un tank niveau 20 (20 points et 4 classes à choisir).</li>
+                    <li>Nouveaux mobs lasers : la Lentille (1 laser visé, dès le secteur 4) et le Kaléido (3 lasers tournants, dès le secteur 6). 3 maximum à la fois.</li>
+                </ul>
+            </details>
             <details class="modal-section patch-notes">
                 <summary>Patch v5.2 : 5 nouveaux boss et rééquilibrage</summary>
                 <ul class="patch-list muted">
@@ -225,6 +235,6 @@
             <div id="cardOptions" class="class-options cards"></div>
         </div>
     </div>
-    <script src="script.js?v=5.2"></script>
+    <script src="script.js?v=5.3"></script>
 </body>
 </html>
