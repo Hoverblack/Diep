@@ -8,6 +8,7 @@ const FONT = '"Press Start 2P", "Courier New", monospace';
 // DOM references
 const $ = (id) => document.getElementById(id);
 const levelDisplay = $("levelDisplay");
+const levelBigDisplay = $("levelBigDisplay");
 const hpDisplay = $("hpDisplay");
 const hpFill = $("hpFill");
 const xpText = $("xpText");
@@ -32,6 +33,13 @@ const cardOptions = $("cardOptions");
 const cardTitle = $("cardTitle");
 const pauseButton = $("pauseButton");
 const soundButton = $("soundButton");
+const musicButton = $("musicButton");
+const homeButton = $("homeButton");
+const musicVolumeRange = $("musicVolumeRange");
+const sfxVolumeRange = $("sfxVolumeRange");
+const cheatOverlay = $("cheatOverlay");
+const cheatList = $("cheatList");
+const closeCheatsButton = $("closeCheatsButton");
 const menuOverlay = $("menuOverlay");
 const gameOverOverlay = $("gameOverOverlay");
 const controlsOverlay = $("controlsOverlay");
@@ -318,6 +326,11 @@ const enemies = [];
 const pickups = [];
 const drones = [];
 const mines = [];
+// Drones spéciaux : chasseurs (Hangar), carrés (Nécromancien),
+// boucliers (Gardien) et lance-missiles (Porte-drones).
+const minions = [];
+// Explosions de missiles à appliquer après la boucle des ennemis.
+const pendingExplosions = [];
 
 let enemySpawnTimer = 0;
 const enemySpawnInterval = 900;
@@ -368,12 +381,28 @@ const MAX_PLAYER_PROJECTILES = 50;
 // Sons 8-bit (Web Audio, aucun fichier)
 // ---------------------------------------------------------------------------
 
+const STORAGE_AUDIO = "neonDiep.audio.v1";
+const savedAudio = storageGet(STORAGE_AUDIO, {}) || {};
+
 const sound = {
     ctx: null,
     master: null,
+    sfx: null,
     muted: storageGet(STORAGE_SOUND, false) === true,
+    musicOn: savedAudio.musicOn !== false,
+    musicVolume: typeof savedAudio.musicVolume === "number" ? savedAudio.musicVolume : 0.6,
+    sfxVolume: typeof savedAudio.sfxVolume === "number" ? savedAudio.sfxVolume : 0.8,
     last: {},
+    noiseBuffer: null,
 };
+
+function saveAudioSettings() {
+    storageSet(STORAGE_AUDIO, {
+        musicOn: sound.musicOn,
+        musicVolume: sound.musicVolume,
+        sfxVolume: sound.sfxVolume,
+    });
+}
 
 function ensureAudio() {
     if (sound.ctx) {
@@ -386,6 +415,15 @@ function ensureAudio() {
     sound.master = sound.ctx.createGain();
     sound.master.gain.value = sound.muted ? 0 : 0.35;
     sound.master.connect(sound.ctx.destination);
+    sound.sfx = sound.ctx.createGain();
+    sound.sfx.gain.value = sound.sfxVolume;
+    sound.sfx.connect(sound.master);
+    // Bruit blanc pré-calculé, partagé par les bruitages et la batterie.
+    const length = sound.ctx.sampleRate;
+    sound.noiseBuffer = sound.ctx.createBuffer(1, length, sound.ctx.sampleRate);
+    const data = sound.noiseBuffer.getChannelData(0);
+    for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
+    initMusic();
     return sound.ctx;
 }
 
@@ -401,32 +439,29 @@ function tone({ freq = 440, to = null, dur = 0.1, type = "square", vol = 0.2, de
     gain.gain.setValueAtTime(vol, t0);
     gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     osc.connect(gain);
-    gain.connect(sound.master);
+    gain.connect(sound.sfx);
     osc.start(t0);
     osc.stop(t0 + dur + 0.02);
 }
 
-function noise({ dur = 0.2, vol = 0.25, delay = 0, filter = 1200 }) {
+function noise({ dur = 0.2, vol = 0.25, delay = 0, filter = 1200, type = "lowpass", sweep = true }) {
     const ac = sound.ctx;
     if (!ac || sound.muted) return;
     const t0 = ac.currentTime + delay;
-    const length = Math.floor(ac.sampleRate * dur);
-    const buffer = ac.createBuffer(1, length, ac.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
     const src = ac.createBufferSource();
-    src.buffer = buffer;
+    src.buffer = sound.noiseBuffer;
     const lp = ac.createBiquadFilter();
-    lp.type = "lowpass";
+    lp.type = type;
     lp.frequency.setValueAtTime(filter, t0);
-    lp.frequency.exponentialRampToValueAtTime(80, t0 + dur);
+    if (sweep && type === "lowpass") lp.frequency.exponentialRampToValueAtTime(80, t0 + dur);
     const gain = ac.createGain();
     gain.gain.setValueAtTime(vol, t0);
     gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     src.connect(lp);
     lp.connect(gain);
-    gain.connect(sound.master);
-    src.start(t0);
+    gain.connect(sound.sfx);
+    src.start(t0, Math.random() * 0.5);
+    src.stop(t0 + dur + 0.02);
 }
 
 const SFX = {
@@ -445,11 +480,59 @@ const SFX = {
         noise({ dur: 0.1, vol: 0.12 });
     },
     pickup: () => [660, 880, 1320].forEach((f, i) => tone({ freq: f, dur: 0.07, vol: 0.12, delay: i * 0.05 })),
+    powerUp: () => {
+        [440, 554, 659, 880, 1109].forEach((f, i) => tone({ freq: f, dur: 0.09, type: "triangle", vol: 0.13, delay: i * 0.04 }));
+        tone({ freq: 220, to: 880, dur: 0.35, type: "sawtooth", vol: 0.05 });
+    },
     levelUp: () => [523, 659, 784, 1046].forEach((f, i) => tone({ freq: f, dur: 0.1, vol: 0.14, delay: i * 0.07 })),
     boss: () => [0, 0.25, 0.5].forEach((d) => tone({ freq: 110, to: 220, dur: 0.22, type: "sawtooth", vol: 0.18, delay: d })),
+    phase: () => {
+        [0, 0.18].forEach((d) => tone({ freq: 70, to: 260, dur: 0.3, type: "sawtooth", vol: 0.2, delay: d }));
+        noise({ dur: 0.5, vol: 0.2, filter: 900, delay: 0.1 });
+    },
     portal: () => tone({ freq: 200, to: 1600, dur: 0.6, type: "triangle", vol: 0.16 }),
+    warp: () => {
+        tone({ freq: 1600, to: 90, dur: 0.7, type: "sawtooth", vol: 0.1 });
+        noise({ dur: 0.6, vol: 0.12, filter: 5000 });
+    },
     sector: () => [392, 523, 659, 784, 1046].forEach((f, i) => tone({ freq: f, dur: 0.12, type: "triangle", vol: 0.14, delay: i * 0.08 })),
     select: () => tone({ freq: 740, to: 1100, dur: 0.08, vol: 0.12 }),
+    card: () => [784, 988, 1175, 1568].forEach((f, i) => tone({ freq: f, dur: 0.14, type: "triangle", vol: 0.12, delay: i * 0.06 })),
+    classPick: () => {
+        [262, 330, 392, 523, 659, 784].forEach((f, i) => tone({ freq: f, dur: 0.16, type: "square", vol: 0.08, delay: i * 0.05 }));
+        noise({ dur: 0.4, vol: 0.08, filter: 6000, type: "highpass", sweep: false, delay: 0.25 });
+    },
+    lifeUp: () => [523, 784, 1046, 1568].forEach((f, i) => tone({ freq: f, dur: 0.12, type: "triangle", vol: 0.14, delay: i * 0.09 })),
+    combo: () => tone({ freq: 988, to: 1976, dur: 0.12, type: "square", vol: 0.06 }),
+    nova: () => {
+        noise({ dur: 0.7, vol: 0.3, filter: 3000 });
+        tone({ freq: 60, to: 30, dur: 0.5, type: "sine", vol: 0.4 });
+        tone({ freq: 1200, to: 200, dur: 0.4, type: "sawtooth", vol: 0.06 });
+    },
+    mine: () => {
+        noise({ dur: 0.35, vol: 0.28, filter: 1400 });
+        tone({ freq: 90, to: 35, dur: 0.3, type: "sine", vol: 0.3 });
+    },
+    missile: () => tone({ freq: 300, to: 900, dur: 0.12, type: "sawtooth", vol: 0.035 }),
+    ricochet: () => tone({ freq: 1800 + Math.random() * 600, to: 2600, dur: 0.06, type: "triangle", vol: 0.05 }),
+    dash: () => tone({ freq: 520, to: 1400, dur: 0.1, type: "triangle", vol: 0.05 }),
+    enemyShoot: () => tone({ freq: 420, to: 260, dur: 0.06, type: "square", vol: 0.02 }),
+    laser: () => tone({ freq: 140 + Math.random() * 20, to: 120, dur: 0.14, type: "sawtooth", vol: 0.035 }),
+    shieldBreak: () => {
+        noise({ dur: 0.35, vol: 0.2, filter: 7000, type: "highpass", sweep: false });
+        [1760, 1320, 990].forEach((f, i) => tone({ freq: f, dur: 0.08, type: "triangle", vol: 0.08, delay: i * 0.05 }));
+    },
+    warn: () => tone({ freq: 880, dur: 0.08, type: "square", vol: 0.06 }),
+    heartbeat: () => {
+        tone({ freq: 70, to: 45, dur: 0.12, type: "sine", vol: 0.35 });
+        tone({ freq: 65, to: 40, dur: 0.12, type: "sine", vol: 0.25, delay: 0.16 });
+    },
+    pause: () => tone({ freq: 660, to: 330, dur: 0.12, type: "triangle", vol: 0.1 }),
+    unpause: () => tone({ freq: 330, to: 660, dur: 0.12, type: "triangle", vol: 0.1 }),
+    cheat: () => {
+        [523, 659, 784, 1046, 1318, 1568, 2093].forEach((f, i) => tone({ freq: f, dur: 0.09, type: "square", vol: 0.09, delay: i * 0.05 }));
+        noise({ dur: 0.5, vol: 0.1, filter: 8000, type: "highpass", sweep: false, delay: 0.3 });
+    },
     death: () => {
         noise({ dur: 0.6, vol: 0.35 });
         [440, 330, 220, 110].forEach((f, i) => tone({ freq: f, dur: 0.18, type: "sawtooth", vol: 0.15, delay: i * 0.12 }));
@@ -469,7 +552,296 @@ function toggleMute() {
     sound.muted = !sound.muted;
     storageSet(STORAGE_SOUND, sound.muted);
     if (sound.master) sound.master.gain.value = sound.muted ? 0 : 0.35;
+    refreshSoundButtons();
+}
+
+function toggleMusic() {
+    sound.musicOn = !sound.musicOn;
+    saveAudioSettings();
+    applyMusicVolume();
+    refreshSoundButtons();
+}
+
+function setMusicVolume(value) {
+    sound.musicVolume = Math.max(0, Math.min(1, value));
+    saveAudioSettings();
+    applyMusicVolume();
+}
+
+function setSfxVolume(value) {
+    sound.sfxVolume = Math.max(0, Math.min(1, value));
+    saveAudioSettings();
+    if (sound.sfx) sound.sfx.gain.value = sound.sfxVolume;
+}
+
+function refreshSoundButtons() {
     soundButton.textContent = sound.muted ? "Son : off" : "Son : on";
+    musicButton.textContent = sound.musicOn ? "Musique : on" : "Musique : off";
+    musicButton.classList.toggle("off", !sound.musicOn);
+    soundButton.classList.toggle("off", sound.muted);
+}
+
+// ---------------------------------------------------------------------------
+// Musique synthwave procédurale (Web Audio, aucun fichier)
+// Basse qui roule, arpèges, nappes « sidechain », batterie 80's.
+// Trois ambiances : menu (calme), combat, boss (plus rapide et sombre).
+// ---------------------------------------------------------------------------
+
+const midiFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+const MUSIC_TRACKS = {
+    menu: {
+        bpm: 92,
+        chords: [
+            { bass: 45, notes: [57, 60, 64, 69] }, // Am
+            { bass: 41, notes: [57, 60, 65, 69] }, // F
+            { bass: 36, notes: [55, 60, 64, 67] }, // C
+            { bass: 43, notes: [55, 59, 62, 67] }, // G
+        ],
+        kick: [0, 8],
+        snare: [],
+        hats: [4, 12],
+        bassSteps: [0, 3, 6, 8, 11, 14],
+        arp: "slow",
+        lead: false,
+    },
+    fight: {
+        bpm: 112,
+        chords: [
+            { bass: 45, notes: [57, 60, 64, 69] }, // Am
+            { bass: 41, notes: [57, 60, 65, 69] }, // F
+            { bass: 36, notes: [55, 60, 64, 67] }, // C
+            { bass: 43, notes: [55, 59, 62, 67] }, // G
+            { bass: 45, notes: [57, 60, 64, 69] }, // Am
+            { bass: 41, notes: [57, 60, 65, 69] }, // F
+            { bass: 38, notes: [57, 62, 65, 69] }, // Dm
+            { bass: 40, notes: [56, 59, 64, 68] }, // E
+        ],
+        kick: [0, 4, 8, 12],
+        snare: [4, 12],
+        hats: [2, 6, 10, 14],
+        bassSteps: [0, 2, 4, 6, 8, 10, 12, 14],
+        arp: "fast",
+        lead: true,
+    },
+    boss: {
+        bpm: 128,
+        chords: [
+            { bass: 45, notes: [57, 60, 64, 69] }, // Am
+            { bass: 45, notes: [57, 60, 64, 69] }, // Am
+            { bass: 41, notes: [57, 60, 65, 69] }, // F
+            { bass: 40, notes: [56, 59, 64, 68] }, // E
+        ],
+        kick: [0, 4, 8, 10, 12],
+        snare: [4, 12],
+        hats: [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15],
+        bassSteps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        arp: "fast",
+        lead: true,
+        stabs: true,
+    },
+};
+
+// Motif de la mélodie (degrés dans l'accord, -1 = silence), 2 mesures.
+const LEAD_MOTIF = [3, -1, 2, -1, 3, -1, 4, 3, -1, -1, 2, -1, 1, -1, 2, -1, 3, -1, -1, 2, -1, 1, -1, 0, -1, -1, 1, -1, 2, -1, -1, -1];
+const ARP_FAST = [0, 1, 2, 3, 4, 3, 2, 1, 0, 2, 4, 5, 4, 2, 3, 1];
+const ARP_SLOW = [0, 2, 4, 5];
+
+const music = {
+    bus: null,
+    filter: null,
+    padBus: null,
+    delay: null,
+    mode: "menu",
+    wanted: "menu",
+    step: 0,
+    bar: 0,
+    nextTime: 0,
+    timer: null,
+};
+
+function initMusic() {
+    const ac = sound.ctx;
+    music.bus = ac.createGain();
+    music.filter = ac.createBiquadFilter();
+    music.filter.type = "lowpass";
+    music.filter.frequency.value = 18000;
+    music.bus.connect(music.filter);
+    music.filter.connect(sound.master);
+    // Nappes : bus séparé pour l'effet « pompe » à chaque grosse caisse
+    music.padBus = ac.createGain();
+    music.padBus.connect(music.bus);
+    // Écho sur l'arpège et la mélodie
+    music.delay = ac.createDelay(1);
+    music.delay.delayTime.value = (60 / MUSIC_TRACKS.fight.bpm) * 0.75;
+    const feedback = ac.createGain();
+    feedback.gain.value = 0.32;
+    const wet = ac.createGain();
+    wet.gain.value = 0.35;
+    music.delay.connect(feedback);
+    feedback.connect(music.delay);
+    music.delay.connect(wet);
+    wet.connect(music.bus);
+    applyMusicVolume();
+    music.nextTime = ac.currentTime + 0.1;
+    music.timer = setInterval(scheduleMusic, 25);
+}
+
+function applyMusicVolume() {
+    if (!music.bus) return;
+    const target = sound.musicOn ? sound.musicVolume * 0.55 : 0;
+    music.bus.gain.setTargetAtTime(target, sound.ctx.currentTime, 0.08);
+}
+
+function musicVoice({ freq, time, dur, type = "sawtooth", vol = 0.1, attack = 0.005, cutoff = 0, detune = 0, dest = music.bus, send = false }) {
+    const ac = sound.ctx;
+    const osc = ac.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, time);
+    osc.detune.value = detune;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(vol, time + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    let node = osc;
+    if (cutoff) {
+        const lp = ac.createBiquadFilter();
+        lp.type = "lowpass";
+        lp.frequency.setValueAtTime(cutoff, time);
+        lp.frequency.exponentialRampToValueAtTime(Math.max(120, cutoff * 0.25), time + dur);
+        osc.connect(lp);
+        node = lp;
+    }
+    node.connect(gain);
+    gain.connect(dest);
+    if (send) gain.connect(music.delay);
+    osc.start(time);
+    osc.stop(time + dur + 0.05);
+}
+
+function musicNoise({ time, dur, vol, type, freq }) {
+    const ac = sound.ctx;
+    const src = ac.createBufferSource();
+    src.buffer = sound.noiseBuffer;
+    const f = ac.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(vol, time);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    src.connect(f);
+    f.connect(gain);
+    gain.connect(music.bus);
+    src.start(time, Math.random() * 0.5);
+    src.stop(time + dur + 0.02);
+}
+
+function musicKick(time) {
+    const ac = sound.ctx;
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(150, time);
+    osc.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+    gain.gain.setValueAtTime(0.9, time);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.32);
+    osc.connect(gain);
+    gain.connect(music.bus);
+    osc.start(time);
+    osc.stop(time + 0.35);
+    // Pompe : les nappes s'effacent sous la grosse caisse
+    music.padBus.gain.cancelScheduledValues(time);
+    music.padBus.gain.setValueAtTime(0.25, time);
+    music.padBus.gain.linearRampToValueAtTime(1, time + 0.22);
+}
+
+function scheduleMusic() {
+    const ac = sound.ctx;
+    if (!ac || ac.state !== "running") return;
+    // Onglet en arrière-plan : on se recale au lieu de rattraper le retard.
+    if (music.nextTime < ac.currentTime - 0.3) music.nextTime = ac.currentTime + 0.05;
+    while (music.nextTime < ac.currentTime + 0.12) {
+        // Changement d'ambiance au début d'une mesure seulement.
+        if (music.step === 0 && music.wanted !== music.mode) {
+            music.mode = music.wanted;
+            music.bar = 0;
+        }
+        const track = MUSIC_TRACKS[music.mode];
+        const stepDur = 60 / track.bpm / 4;
+        if (sound.musicOn && !sound.muted) playMusicStep(track, music.step, music.bar, music.nextTime, stepDur);
+        music.nextTime += stepDur;
+        music.step = (music.step + 1) % 16;
+        if (music.step === 0) music.bar += 1;
+    }
+}
+
+function playMusicStep(track, step, bar, t, stepDur) {
+    const chord = track.chords[bar % track.chords.length];
+    music.delay.delayTime.setValueAtTime(stepDur * 3, t);
+
+    if (track.kick.includes(step)) musicKick(t);
+    if (track.snare.includes(step)) {
+        musicNoise({ time: t, dur: 0.22, vol: 0.28, type: "bandpass", freq: 1800 });
+        musicVoice({ freq: 190, time: t, dur: 0.1, type: "triangle", vol: 0.14 });
+    }
+    if (track.hats.includes(step)) {
+        const accent = step % 4 === 2 ? 1 : 0.55;
+        musicNoise({ time: t, dur: 0.04, vol: 0.09 * accent, type: "highpass", freq: 8000 });
+    }
+    // Basse en octaves (le « roulement » typique de la synthwave)
+    if (track.bassSteps.includes(step)) {
+        const octave = track.bassSteps.length > 8 ? (step % 2 ? 12 : 0) : (step % 4 === 2 ? 12 : 0);
+        musicVoice({ freq: midiFreq(chord.bass + octave), time: t, dur: stepDur * 1.8, type: "sawtooth", vol: 0.16, cutoff: 900 });
+    }
+    // Nappe : accord désaccordé tenu toute la mesure
+    if (step === 0) {
+        chord.notes.slice(0, 3).forEach((n) => {
+            [-9, 9].forEach((detune) =>
+                musicVoice({ freq: midiFreq(n), time: t, dur: stepDur * 16, type: "sawtooth", vol: 0.035, attack: 0.4, cutoff: 1800, detune, dest: music.padBus })
+            );
+        });
+    }
+    // Arpège
+    const tones = [...chord.notes, ...chord.notes.map((n) => n + 12)];
+    if (track.arp === "fast") {
+        const n = tones[ARP_FAST[step] % tones.length];
+        musicVoice({ freq: midiFreq(n + 12), time: t, dur: stepDur * 0.9, type: "square", vol: 0.028, cutoff: 3500, send: true });
+    } else if (step % 4 === 0) {
+        const n = tones[ARP_SLOW[(step / 4) % 4]];
+        musicVoice({ freq: midiFreq(n + 12), time: t, dur: stepDur * 3.5, type: "triangle", vol: 0.06, send: true });
+    }
+    // Mélodie : une mesure sur deux en combat, en continu contre un boss
+    if (track.lead && (track.stabs || Math.floor(bar / 4) % 2 === 1)) {
+        const degree = LEAD_MOTIF[(bar % 2) * 16 + step];
+        if (degree >= 0) {
+            const n = tones[degree] + 12;
+            musicVoice({ freq: midiFreq(n), time: t, dur: stepDur * 2.2, type: "sawtooth", vol: 0.04, attack: 0.02, cutoff: 4200, detune: 6, send: true });
+            musicVoice({ freq: midiFreq(n), time: t, dur: stepDur * 2.2, type: "square", vol: 0.02, attack: 0.02, cutoff: 3000, detune: -6 });
+        }
+    }
+    // Coups d'accord à contretemps contre les boss
+    if (track.stabs && (step === 6 || step === 14)) {
+        chord.notes.slice(1).forEach((n) =>
+            musicVoice({ freq: midiFreq(n), time: t, dur: stepDur * 1.2, type: "sawtooth", vol: 0.03, cutoff: 2600 })
+        );
+    }
+}
+
+// Ambiance voulue selon l'état du jeu ; pause = son étouffé.
+function updateMusic() {
+    if (!music.bus) return;
+    let wanted = "menu";
+    if (state.phase === "playing") {
+        const boss = state.sectorPhase === "boss" || (getSector().arena && state.sectorPhase === "intro");
+        wanted = boss ? "boss" : "fight";
+    }
+    music.wanted = wanted;
+    const muffled = state.phase === "playing" && (state.paused || player.pendingClassChoice || state.sectorPhase === "cards");
+    const cutoff = muffled ? 700 : 18000;
+    if (music.cutoff !== cutoff) {
+        music.cutoff = cutoff;
+        music.filter.frequency.setTargetAtTime(cutoff, sound.ctx.currentTime, 0.1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +999,7 @@ const perkDefinitions = {
     lucky: { icon: "★", name: "Chance", description: "Bonus plus fréquents, plus de drops.", max: 4 },
     combo: { icon: "✦", name: "Frénésie", description: "Combos plus longs (+0,8 s).", max: 4 },
     shield: { icon: "◇", name: "Bouclier", description: "-10 % de dégâts subis.", max: 4 },
+    ricochet: { icon: "↯", name: "Ricochet", description: "Tes tirs rebondissent sur les murs et filent vers un autre ennemi après un impact (+1 rebond).", max: 3 },
 };
 
 const perks = {};
@@ -653,7 +1026,10 @@ function rollPerkChoices(count = 3) {
 
 function applyPerk(key) {
     perks[key] = perk(key) + 1;
-    if (key === "extraLife") state.lives += 1;
+    if (key === "extraLife") {
+        state.lives += 1;
+        play("lifeUp");
+    }
     recalcPlayerStats({ refillHealth: key === "armor" });
 }
 
@@ -680,7 +1056,13 @@ function resetPlayerModifiers() {
     playerModifiers.fortress = false;
     playerModifiers.swarmDrones = 0;
     playerModifiers.droneRateMult = 1;
+    playerModifiers.hangar = false;
+    playerModifiers.necromancer = false;
+    playerModifiers.guardian = false;
+    playerModifiers.carrier = false;
+    playerModifiers.droneMaster = false;
     drones.length = 0;
+    minions.length = 0;
 }
 
 function unlockRandomSkin() {
@@ -695,6 +1077,116 @@ function unlockRandomSkin() {
     const choice = available[Math.floor(Math.random() * available.length)];
     unlockedSkinIndexes.add(choice);
     currentSkinIndex = choice;
+}
+
+// ---------------------------------------------------------------------------
+// Mode triche (code secret, jamais affiché dans le jeu)
+// ---------------------------------------------------------------------------
+
+const cheats = { god: false, aimbot: false, oneShot: false, rapid: false };
+const CHEAT_CODE = [
+    "ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown",
+    "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight",
+    "n", "e", "o", "n",
+];
+const cheatInput = [];
+
+function cheatsActive() {
+    return state.cheated;
+}
+
+// Renvoie true quand la dernière touche complète le code.
+function feedCheatCode(code, key) {
+    const token = code.startsWith("Arrow") ? code : key;
+    cheatInput.push(token);
+    if (cheatInput.length > CHEAT_CODE.length) cheatInput.shift();
+    return cheatInput.length === CHEAT_CODE.length && cheatInput.every((t, i) => t === CHEAT_CODE[i]);
+}
+
+const CHEAT_ENTRIES = [
+    { id: "god", label: "Invincible", toggle: true },
+    { id: "aimbot", label: "Aim-bot permanent", toggle: true },
+    { id: "oneShot", label: "Dégâts x10", toggle: true },
+    { id: "rapid", label: "Cadence max", toggle: true },
+    { id: "levels", label: "+5 niveaux", run: () => gainXP(xpForLevels(5)) },
+    { id: "life", label: "+1 vie", run: () => { state.lives += 1; play("lifeUp"); } },
+    { id: "heal", label: "Soin complet", run: () => { player.health = player.maxHealth; } },
+    { id: "powerups", label: "Tous les power-ups", run: grantAllPowerUps },
+    { id: "portal", label: "Boss battu, portail ouvert", run: skipToPortal },
+];
+
+function xpForLevels(count) {
+    let total = state.xpToNext - state.xp;
+    let next = state.xpToNext;
+    for (let i = 1; i < count; i += 1) {
+        next = Math.round(next * 1.2 + 20);
+        total += next;
+    }
+    return total / (isBuffActive("tripleXP") ? 3 : 1) / (1 + upgrades.xpGain.level * 0.2) + 1;
+}
+
+function grantAllPowerUps() {
+    lootTypes
+        .filter((t) => t.special || ["speed", "fireRate", "droneAssist"].includes(t.key))
+        .forEach((t) => {
+            if (t.key === "nova") return;
+            if (t.key === "shieldOrb") state.shieldHp = Math.round(player.maxHealth * 0.6);
+            addBuff(t.key, t.duration || 10000);
+        });
+}
+
+function skipToPortal() {
+    if (state.sectorPhase === "fight" || (state.sectorPhase === "intro" && !getSector().arena)) {
+        state.sectorPhase = "fight";
+        startBossPhase();
+    } else if (state.sectorPhase === "intro" && getSector().arena) {
+        startBossPhase();
+    }
+    const boss = enemies.find((e) => e.isBoss);
+    if (boss) killEnemy(boss);
+}
+
+function openCheatMenu() {
+    state.cheatMenuOpen = true;
+    if (!state.paused) togglePause({ silent: true });
+    renderCheatMenu();
+    showOverlay(cheatOverlay);
+}
+
+function closeCheatMenu() {
+    state.cheatMenuOpen = false;
+    hideOverlay(cheatOverlay);
+    if (state.paused && state.phase === "playing") togglePause({ silent: true });
+}
+
+function renderCheatMenu() {
+    cheatList.innerHTML = "";
+    CHEAT_ENTRIES.forEach((entry, index) => {
+        const button = document.createElement("button");
+        button.className = "cheat-button";
+        const hotkey = index + 1;
+        const on = entry.toggle && cheats[entry.id];
+        button.classList.toggle("on", !!on);
+        button.innerHTML = `<span class="hotkey">[${hotkey}]</span> ${entry.label}${entry.toggle ? `<strong>${on ? "ON" : "OFF"}</strong>` : ""}`;
+        button.addEventListener("click", () => useCheat(entry));
+        cheatList.appendChild(button);
+    });
+}
+
+function useCheat(entry) {
+    state.cheated = true;
+    if (entry.toggle) cheats[entry.id] = !cheats[entry.id];
+    else entry.run();
+    play("select");
+    renderCheatMenu();
+    refreshUpgradePanel();
+    updateHUD();
+}
+
+function resetCheats() {
+    Object.keys(cheats).forEach((key) => (cheats[key] = false));
+    state.cheated = false;
+    state.cheatMenuOpen = false;
 }
 
 const activeBuffs = {};
@@ -746,9 +1238,10 @@ const classTiers = {
     5: ["sniper", "machineGun"],
     10: ["destroyer", "droneController"],
     15: ["shotgun", "octoTank"],
-    20: ["overseer"],
+    20: ["overseer", "hangar", "necromancer"],
     25: ["prismatic", "fortress"],
     30: ["supernova", "swarm"],
+    40: ["guardian", "carrier", "droneMaster"],
 };
 
 const classDefinitions = {
@@ -822,6 +1315,20 @@ const classDefinitions = {
             playerModifiers.projectileSpeedMultiplier *= 1.05;
         },
     },
+    hangar: {
+        name: "Hangar",
+        description: "3 chasseurs kamikazes : ils foncent sur les ennemis, explosent au contact et reviennent se recharger.",
+        apply() {
+            playerModifiers.hangar = true;
+        },
+    },
+    necromancer: {
+        name: "Nécromancien",
+        description: "Les ennemis tués ont 35 % de chances de revenir en carré allié qui fonce sur les autres (8 max).",
+        apply() {
+            playerModifiers.necromancer = true;
+        },
+    },
     prismatic: {
         name: "Prismatique",
         description: "Un rayon laser arc-en-ciel part du canon 0,7 s toutes les 3 s et traverse tout.",
@@ -851,6 +1358,29 @@ const classDefinitions = {
         apply() {
             playerModifiers.swarmDrones = 3;
             playerModifiers.droneRateMult = 0.6;
+        },
+    },
+    guardian: {
+        name: "Gardien",
+        description: "4 drones-boucliers tournent autour de toi : ils arrêtent les balles ennemies et brûlent ce qu'ils touchent.",
+        apply() {
+            playerModifiers.guardian = true;
+        },
+    },
+    carrier: {
+        name: "Porte-drones",
+        description: "3 drones lance-missiles : des missiles chercheurs qui explosent en zone.",
+        apply() {
+            playerModifiers.carrier = true;
+        },
+    },
+    droneMaster: {
+        name: "Maître des drones",
+        description: "+2 drones et +2 chasseurs, tous tes drones font +60 % de dégâts et tirent 25 % plus vite.",
+        apply() {
+            playerModifiers.droneMaster = true;
+            playerModifiers.droneDamage *= 1.6;
+            playerModifiers.droneRateMult = (playerModifiers.droneRateMult || 1) * 0.75;
         },
     },
 };
@@ -1197,7 +1727,9 @@ setTimeout(() => {
     resetRunState();
     state.paused = true;
     trackpadModeToggle.checked = state.trackpadMode;
-    soundButton.textContent = sound.muted ? "Son : off" : "Son : on";
+    refreshSoundButtons();
+    musicVolumeRange.value = Math.round(sound.musicVolume * 100);
+    sfxVolumeRange.value = Math.round(sound.sfxVolume * 100);
     refreshDifficultyModeButtons();
     updateDifficultyDisplay();
     refreshMenu();
@@ -1230,6 +1762,38 @@ window.addEventListener("keydown", (event) => {
 
     if (key === "m" && !event.repeat) {
         toggleMute();
+        return;
+    }
+    if (key === "b" && !event.repeat) {
+        toggleMusic();
+        return;
+    }
+
+    if (isOverlayVisible(cheatOverlay)) {
+        const index = UPGRADE_HOTKEYS.indexOf(code);
+        if (code === "Escape" || code === "Enter") {
+            closeCheatMenu();
+            event.preventDefault();
+        } else if (index >= 0 && CHEAT_ENTRIES[index]) {
+            useCheat(CHEAT_ENTRIES[index]);
+            event.preventDefault();
+        }
+        return;
+    }
+
+    if (
+        state.phase === "playing" &&
+        !event.repeat &&
+        !player.pendingClassChoice &&
+        state.sectorPhase !== "cards" &&
+        feedCheatCode(code, key)
+    ) {
+        cheatInput.length = 0;
+        keys[code] = false;
+        play("cheat");
+        flash("255,43,214", 0.4);
+        openCheatMenu();
+        event.preventDefault();
         return;
     }
 
@@ -1294,6 +1858,11 @@ window.addEventListener("keydown", (event) => {
         return;
     }
 
+    if (key === "h" && !event.repeat) {
+        requestHome();
+        return;
+    }
+
     const upgradeIndex = UPGRADE_HOTKEYS.indexOf(code);
     if (upgradeIndex >= 0 && !state.paused) {
         const upgradeKey = Object.keys(upgrades)[upgradeIndex];
@@ -1347,6 +1916,22 @@ pauseButton.addEventListener("click", () => togglePause());
 soundButton.addEventListener("click", () => {
     ensureAudio();
     toggleMute();
+});
+musicButton.addEventListener("click", () => {
+    ensureAudio();
+    toggleMusic();
+});
+homeButton.addEventListener("click", () => requestHome());
+closeCheatsButton.addEventListener("click", () => closeCheatMenu());
+musicVolumeRange.addEventListener("input", (event) => {
+    ensureAudio();
+    setMusicVolume(Number(event.target.value) / 100);
+    if (!sound.musicOn && sound.musicVolume > 0) toggleMusic();
+});
+sfxVolumeRange.addEventListener("input", (event) => {
+    ensureAudio();
+    setSfxVolume(Number(event.target.value) / 100);
+    play("pickup", 120);
 });
 
 menuDifficultyRange.addEventListener("input", (event) => {
@@ -1404,6 +1989,15 @@ function formatScore(value) {
 
 function updateHUD() {
     setText(levelDisplay, String(state.level));
+    setText(levelBigDisplay, String(state.level));
+    if (hudCache.lastLevel !== state.level) {
+        if (hudCache.lastLevel !== undefined && state.level > hudCache.lastLevel) {
+            levelBigDisplay.classList.remove("level-pop");
+            void levelBigDisplay.offsetWidth; // relance l'animation
+            levelBigDisplay.classList.add("level-pop");
+        }
+        hudCache.lastLevel = state.level;
+    }
     setText(hpDisplay, `${Math.ceil(player.health)} / ${player.maxHealth}`);
     setWidth(hpFill, player.health / player.maxHealth);
     setText(xpText, `${Math.floor(state.xp)} / ${state.xpToNext}`);
@@ -1413,7 +2007,7 @@ function updateHUD() {
     setText(sectorDisplay, sector.infinite ? `∞${state.sectorIndex - sectors.length + 1}` : String(state.sectorIndex + 1));
     setText(livesDisplay, state.lives > 5 ? `♥x${state.lives}` : "♥".repeat(Math.max(0, state.lives)) || "-");
     setText(scoreDisplay, formatScore(state.score));
-    setText(bestDisplay, formatScore(Math.max(state.best, state.score)));
+    setText(bestDisplay, formatScore(state.cheated ? state.best : Math.max(state.best, state.score)));
 
     const boss = enemies.find((e) => e.isBoss);
     if (state.sectorPhase === "boss" && boss) {
@@ -1459,10 +2053,34 @@ function updateUpgradeButtonStates() {
     });
 }
 
-function togglePause() {
+function togglePause({ silent = false } = {}) {
     if (state.phase !== "playing") return;
     state.paused = !state.paused;
     pauseButton.textContent = state.paused ? "Reprendre" : "Pause";
+    if (!silent) play(state.paused ? "pause" : "unpause");
+}
+
+// Retour à l'accueil : premier appui = pause + confirmation, second = menu.
+// La partie reste sauvegardée au début du secteur (bouton Continuer).
+let homeConfirmTimer = null;
+
+function requestHome() {
+    if (state.phase !== "playing") return;
+    if (homeButton.classList.contains("confirm")) {
+        clearTimeout(homeConfirmTimer);
+        homeButton.classList.remove("confirm");
+        homeButton.textContent = "Accueil";
+        if (state.cheatMenuOpen) closeCheatMenu();
+        returnToMenu();
+        return;
+    }
+    if (!state.paused) togglePause();
+    homeButton.classList.add("confirm");
+    homeButton.textContent = "Sûr ? (H)";
+    homeConfirmTimer = setTimeout(() => {
+        homeButton.classList.remove("confirm");
+        homeButton.textContent = "Accueil";
+    }, 3000);
 }
 
 function getSpawnInterval() {
@@ -1558,6 +2176,8 @@ function hideOverlay(overlay) {
 // ---------------------------------------------------------------------------
 
 function resetRunState() {
+    resetCheats();
+    hideOverlay(cheatOverlay);
     state.xp = 0;
     state.level = 1;
     state.upgradePoints = 0;
@@ -1575,6 +2195,8 @@ function resetRunState() {
     enemyProjectiles.length = 0;
     pickups.length = 0;
     drones.length = 0;
+    minions.length = 0;
+    pendingExplosions.length = 0;
     mines.length = 0;
     clearEffects();
     waveIndex = 0;
@@ -1771,6 +2393,7 @@ function continueFromSave() {
 }
 
 function recordBest() {
+    if (state.cheated) return false; // pas de record avec les triches
     const isRecord = state.score > state.best;
     if (isRecord) {
         state.best = Math.floor(state.score);
@@ -1781,6 +2404,10 @@ function recordBest() {
 
 function handlePlayerDeath() {
     if (state.phase !== "playing" || state.invulnerable > 0) return;
+    if (cheats.god) {
+        player.health = player.maxHealth;
+        return;
+    }
     state.lives -= 1;
     state.combo = 0;
     burst(player.x, player.y, playerSkins[currentSkinIndex].body, 60, 420, 4);
@@ -1816,7 +2443,8 @@ function handlePlayerDeath() {
     finalScore.textContent = formatScore(state.score);
     finalSector.textContent = getSector().name;
     finalBest.textContent = formatScore(state.best);
-    newRecordLine.classList.toggle("hidden", !isRecord);
+    newRecordLine.textContent = state.cheated ? "Triche activée : record non compté" : "Nouveau record !";
+    newRecordLine.classList.toggle("hidden", !isRecord && !state.cheated);
     resumeSaveButton.classList.toggle("hidden", state.challenge || !storageGet(STORAGE_SAVE));
     hideClassOverlay();
     setTimeout(() => showOverlay(gameOverOverlay), 700);
@@ -1863,7 +2491,7 @@ function chooseClass(id, level) {
     state.pendingClassTier = null;
     player.pendingClassChoice = false;
     hideClassOverlay();
-    play("select");
+    play("classPick");
     ring(player.x, player.y, "#ffe45e", 140, 0.6, 4);
     floatText(player.x, player.y - 46, def.name.toUpperCase(), "#ffe45e", 12);
     // Si plusieurs paliers ont été franchis d'un coup, on enchaîne.
@@ -1893,7 +2521,7 @@ function showCardOverlay() {
         button.addEventListener("click", () => {
             if (state.sectorPhase !== "cards") return;
             applyPerk(key);
-            play("select");
+            play("card");
             hideOverlay(cardOverlay);
             nextSector();
         });
@@ -2017,6 +2645,7 @@ function getFireRateBonus() {
 }
 
 function getFireCooldown() {
+    if (cheats.rapid) return 90;
     const buff = isBuffActive("fireRate") ? 1.4 : 1;
     const slowed = state.playerSlow > 0 ? 1.35 : 1; // orbe de Ralenti de Némésis
     return Math.max(
@@ -2064,7 +2693,8 @@ function getDamage() {
         (1 + perk("cannon") * 0.12) *
         playerModifiers.damageMultiplier *
         getExcessShotBonus() *
-        xpBuffBonus
+        xpBuffBonus *
+        (cheats.oneShot ? 10 : 1)
     );
 }
 
@@ -2093,7 +2723,7 @@ function getDamageTakenMultiplier() {
 }
 
 function applyPlayerDamage(amount, { feedback = true } = {}) {
-    if (state.invulnerable > 0) return;
+    if (state.invulnerable > 0 || cheats.god) return;
     let finalDamage = amount * getDamageTakenMultiplier();
     // Le power-up Bouclier encaisse les coups à ta place.
     if (isBuffActive("shieldOrb") && state.shieldHp > 0) {
@@ -2104,6 +2734,7 @@ function applyPlayerDamage(amount, { feedback = true } = {}) {
             activeBuffs.shieldOrb = 0;
             ring(player.x, player.y, "#8ef0ff", 90, 0.4, 3);
             floatText(player.x, player.y - 40, "BOUCLIER BRISÉ", "#8ef0ff", 9);
+            play("shieldBreak");
         }
         if (finalDamage <= 0) {
             if (feedback) burst(player.x, player.y, "#8ef0ff", 5, 160, 2);
@@ -2257,7 +2888,7 @@ function updatePickups(dt) {
             burst(pickup.x, pickup.y, pickup.type.color, 18, 240, 3);
             ring(pickup.x, pickup.y, pickup.type.color, 60, 0.35, 2);
             floatText(pickup.x, pickup.y - 20, pickup.type.label, pickup.type.color, 9);
-            play("pickup");
+            play(pickup.type.special ? "powerUp" : "pickup");
             pickups.splice(i, 1);
         }
     }
@@ -2298,6 +2929,7 @@ function updateMines(dt) {
                 burst(mine.x, mine.y, "#ffb35e", 26, 320, 3);
                 ring(mine.x, mine.y, "#ffb35e", 90, 0.4, 4);
                 shake(5);
+                play("mine", 60);
                 damageEnemy(e, mine.damage);
                 mines.splice(i, 1);
                 break;
@@ -2389,7 +3021,7 @@ function triggerNova(radius, damageMult, color = "#ffffff") {
     burst(player.x, player.y, color, 40, radius * 1.4, 3);
     shake(8);
     flash("255,255,255", 0.25);
-    play("bossKill");
+    play("nova");
 }
 
 // Ralenti : les ennemis et leurs tirs vont deux fois moins vite.
@@ -2407,6 +3039,7 @@ function playerBeamActive() {
 function updatePlayerBeam(dt) {
     player.beamOn = playerBeamActive();
     if (!player.beamOn) return;
+    play("laser", 110);
     const len = 900;
     const width = 14;
     const cos = Math.cos(player.angle);
@@ -2553,7 +3186,8 @@ function estimateBaseDps() {
     // Les plombs du Shotgun (70 % de dégâts, cône large) touchent rarement tous.
     const perShot = playerModifiers.shotgun ? 0.7 * 0.55 : 1;
     const volley = getDamage() * getShotCount() * perShot;
-    const main = volley * (1000 / getFireCooldown());
+    // Ricochet : une partie des tirs retouche une deuxième cible.
+    const main = volley * (1000 / getFireCooldown()) * (1 + perk("ricochet") * 0.15);
     const droneDps =
         (getDroneCount(false) * playerModifiers.droneDamage * (1 + perk("cannon") * 0.12) * 1000) /
         getDroneCooldown();
@@ -2567,11 +3201,16 @@ const TEMP_DAMAGE_BUFFS = ["overdrive", "fireRate", "tripleXP"];
 function estimatePlayerDps() {
     const saved = TEMP_DAMAGE_BUFFS.map((key) => activeBuffs[key]);
     TEMP_DAMAGE_BUFFS.forEach((key) => (activeBuffs[key] = 0));
+    // Les triches ne rendent pas les boss plus coriaces (sinon elles ne servent à rien).
+    const savedCheats = { oneShot: cheats.oneShot, rapid: cheats.rapid };
+    cheats.oneShot = false;
+    cheats.rapid = false;
     const base = estimateBaseDps();
+    Object.assign(cheats, savedCheats);
     TEMP_DAMAGE_BUFFS.forEach((key, i) => (activeBuffs[key] = saved[i]));
     // Classe Prismatique : rayon 0,7 s toutes les 3 s.
     const beam = player.selectedClasses.includes("prismatic") ? base * 0.9 * (0.7 / 3) : 0;
-    return base + beam;
+    return base + beam + estimateMinionDps();
 }
 
 // Réglages des boss par difficulté : dégâts, vitesse d'attaque, vie,
@@ -2665,7 +3304,7 @@ function updateBossPhase(enemy) {
     floatText(enemy.x, enemy.y - enemy.size - 24, rageText, "#ff3b6b", 14);
     shake(16);
     flash("255,59,107", 0.35);
-    play("boss");
+    play("phase");
 }
 
 function spawnEnemy(isBoss = false) {
@@ -2806,6 +3445,7 @@ function killEnemy(enemy, { silent = false } = {}) {
     floatText(enemy.x, enemy.y - enemy.size, `+${points}`, mult > 1 ? "#ff2bd6" : "#ffe45e", mult > 1 ? 11 : 9);
     if (mult > 1 && state.combo % 5 === 0) {
         floatText(enemy.x, enemy.y - enemy.size - 20, `COMBO x${mult}`, "#ff2bd6", 12);
+        play("combo", 200);
     }
 
     if (enemy.isBoss) {
@@ -2827,6 +3467,7 @@ function killEnemy(enemy, { silent = false } = {}) {
         shake(2.5);
         play("kill", 40);
     }
+    maybeRaiseNecro(enemy);
     gainXP(enemy.xp);
 
     if (state.sectorPhase === "fight") {
@@ -2871,6 +3512,10 @@ function createProjectile({
     homingStrength = 0,
     pierce = 0,
     color = null,
+    turnRate = 0,
+    target = null,
+    explode = 0,
+    bounces = perk("ricochet"),
 }) {
     const sizeBonus =
         playerModifiers.projectileSizeBonus +
@@ -2893,6 +3538,10 @@ function createProjectile({
         homingStrength,
         pierce,
         color,
+        turnRate, // rad/s : vrai guidage (aim-bot, missiles)
+        target,
+        explode,
+        bounces,
         hit: new Set(),
     });
 }
@@ -2902,6 +3551,7 @@ function spawnEnemyProjectile(enemy, angle, options = {}) {
     // Les dégâts des boss sont déjà mis à l'échelle dans bossShot.
     const damage = (options.damage || 15) * (enemy.isBoss || options.scaled ? 1 : sectorDamageMult());
     const radius = options.radius || 6;
+    play("enemyShoot", 110);
     enemyProjectiles.push({
         x: enemy.x,
         y: enemy.y,
@@ -2918,10 +3568,11 @@ function spawnEnemyProjectile(enemy, angle, options = {}) {
     });
 }
 
-function findNearestEnemy(x, y) {
+function findNearestEnemy(x, y, exclude = null) {
     let closest = null;
     let closestDist = Infinity;
     enemies.forEach((enemy) => {
+        if (exclude && exclude.has(enemy)) return;
         const dist = Math.hypot(enemy.x - x, enemy.y - y);
         if (dist < closestDist) {
             closest = enemy;
@@ -2929,6 +3580,102 @@ function findNearestEnemy(x, y) {
         }
     });
     return closest;
+}
+
+// Ricochet : après un impact, la balle repart vers l'ennemi le plus proche.
+function redirectRicochet(p) {
+    const next = findNearestEnemy(p.x, p.y, p.hit);
+    if (!next || Math.hypot(next.x - p.x, next.y - p.y) > 460) return false;
+    const angle = Math.atan2(next.y - p.y, next.x - p.x);
+    const speed = Math.hypot(p.vx, p.vy) || p.speed;
+    p.vx = Math.cos(angle) * speed;
+    p.vy = Math.sin(angle) * speed;
+    p.target = next;
+    p.life = Math.max(0, p.life - 0.4);
+    p.color = p.color || "#ffe45e";
+    ring(p.x, p.y, "#ffe45e", 22, 0.2, 2);
+    play("ricochet", 50);
+    return true;
+}
+
+// Aim-bot : verrouille la meilleure cible, anticipe son mouvement
+// et oriente le canon tout seul.
+const aimTrack = { target: null, x: 0, y: 0, vx: 0, vy: 0 };
+
+function isAimbotOn() {
+    return isBuffActive("aimbot") || cheats.aimbot;
+}
+
+function pickAimbotTarget() {
+    let best = null;
+    let bestScore = Infinity;
+    enemies.forEach((e) => {
+        if (e.dead || e.x < -20 || e.y < -20 || e.x > canvas.width + 20 || e.y > canvas.height + 20) return;
+        let score = Math.hypot(e.x - player.x, e.y - player.y);
+        if (e.isBoss) score *= 0.55; // le boss d'abord, sauf menace collée à toi
+        if (e === aimTrack.target) score *= 0.8; // évite de changer de cible sans arrêt
+        if (score < bestScore) {
+            bestScore = score;
+            best = e;
+        }
+    });
+    return best;
+}
+
+function updateAimbot(dt) {
+    if (!isAimbotOn()) {
+        aimTrack.target = null;
+        return;
+    }
+    const target = pickAimbotTarget();
+    if (!target) {
+        aimTrack.target = null;
+        return;
+    }
+    if (target !== aimTrack.target) {
+        aimTrack.target = target;
+        aimTrack.vx = 0;
+        aimTrack.vy = 0;
+    } else if (dt > 0) {
+        const k = 1 - Math.exp(-10 * dt);
+        aimTrack.vx += ((target.x - aimTrack.x) / dt - aimTrack.vx) * k;
+        aimTrack.vy += ((target.y - aimTrack.y) / dt - aimTrack.vy) * k;
+    }
+    aimTrack.x = target.x;
+    aimTrack.y = target.y;
+    // Anticipation : où sera la cible quand la balle arrivera.
+    const speed = getProjectileSpeed();
+    let t = Math.hypot(target.x - player.x, target.y - player.y) / speed;
+    let px = target.x;
+    let py = target.y;
+    for (let k = 0; k < 2; k += 1) {
+        px = target.x + aimTrack.vx * t;
+        py = target.y + aimTrack.vy * t;
+        t = Math.hypot(px - player.x, py - player.y) / speed;
+    }
+    player.angle = Math.atan2(py - player.y, px - player.x);
+}
+
+function drawAimbotLock() {
+    const t = aimTrack.target;
+    if (!t || t.dead || !isAimbotOn() || state.phase !== "playing") return;
+    const r = t.size + 12;
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(state.time * 2);
+    ctx.strokeStyle = "#ff2bd6";
+    ctx.shadowColor = "#ff2bd6";
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 2;
+    for (let k = 0; k < 4; k += 1) {
+        ctx.rotate(Math.PI / 2);
+        ctx.beginPath();
+        ctx.moveTo(r, -8);
+        ctx.lineTo(r, 0);
+        ctx.lineTo(r - 8, 0);
+        ctx.stroke();
+    }
+    ctx.restore();
 }
 
 function shoot() {
@@ -2939,7 +3686,11 @@ function shoot() {
 
     const count = getShotCount();
     const sniperHoming = player.selectedClasses.includes("sniper") ? 0.06 : 0;
-    const homing = (isBuffActive("aimbot") ? 0.08 : 0) + sniperHoming;
+    const homing = sniperHoming;
+    // Aim-bot : chaque balle est guidée vers la cible verrouillée.
+    const aimbot = isAimbotOn();
+    const lockTarget = aimbot ? aimTrack.target : null;
+    const guide = aimbot ? { turnRate: 7, target: lockTarget } : {};
     const projectileSpeed = getProjectileSpeed();
     const pierce = getPierce();
     play("shoot", 70);
@@ -2969,6 +3720,7 @@ function shoot() {
                 life: 0.9 + playerModifiers.projectileLifeBonus,
                 radius: 6,
                 homingStrength: homing * 0.5,
+                ...guide,
                 pierce,
             });
         }
@@ -2990,6 +3742,7 @@ function shoot() {
                 life: 0.7 + playerModifiers.projectileLifeBonus,
                 homingStrength: homing,
                 pierce,
+                ...guide,
             });
         }
         if (playerModifiers.shotgunRecoil) {
@@ -3014,6 +3767,7 @@ function shoot() {
             radius: playerModifiers.damageMultiplier > 2 ? 9 : 6,
             homingStrength: homing,
             pierce,
+            ...guide,
         });
     }
 
@@ -3102,6 +3856,7 @@ function updatePlayer(dt) {
         }
     }
     if (aimDX !== 0 || aimDY !== 0) player.angle = Math.atan2(aimDY, aimDX);
+    updateAimbot(dt);
 
     player.shotTimer = Math.max(0, (player.shotTimer || 0) - dt);
     player.recoil = Math.max(0, (player.recoil || 0) - dt * 8);
@@ -3115,7 +3870,21 @@ function updatePlayer(dt) {
 function updateProjectiles(dt) {
     for (let i = projectiles.length - 1; i >= 0; i -= 1) {
         const p = projectiles[i];
-        if (p.homingStrength && enemies.length > 0) {
+        if (p.turnRate && enemies.length > 0) {
+            // Guidage réel : la balle tourne vers sa cible (ou la plus proche).
+            let target = p.target && !p.target.dead && !p.hit.has(p.target) ? p.target : null;
+            if (!target) target = findNearestEnemy(p.x, p.y, p.hit);
+            if (target) {
+                p.target = target;
+                const heading = Math.atan2(p.vy, p.vx);
+                const want = Math.atan2(target.y - p.y, target.x - p.x);
+                const diff = Math.atan2(Math.sin(want - heading), Math.cos(want - heading));
+                const turn = Math.max(-p.turnRate * dt, Math.min(p.turnRate * dt, diff));
+                const speed = Math.hypot(p.vx, p.vy) || p.speed;
+                p.vx = Math.cos(heading + turn) * speed;
+                p.vy = Math.sin(heading + turn) * speed;
+            }
+        } else if (p.homingStrength && enemies.length > 0) {
             const target = findNearestEnemy(p.x, p.y);
             if (target) {
                 const dx = target.x - p.x;
@@ -3136,6 +3905,27 @@ function updateProjectiles(dt) {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life += dt;
+
+        // Ricochet sur les bords de l'arène
+        if (p.bounces > 0 && !p.explode) {
+            let bounced = false;
+            if (p.x < p.radius || p.x > canvas.width - p.radius) {
+                p.vx = -p.vx;
+                p.x = Math.max(p.radius, Math.min(canvas.width - p.radius, p.x));
+                bounced = true;
+            }
+            if (p.y < p.radius || p.y > canvas.height - p.radius) {
+                p.vy = -p.vy;
+                p.y = Math.max(p.radius, Math.min(canvas.height - p.radius, p.y));
+                bounced = true;
+            }
+            if (bounced) {
+                p.bounces -= 1;
+                p.life = Math.max(0, p.life - 0.5);
+                burst(p.x, p.y, "#ffe45e", 4, 140, 2);
+                play("ricochet", 60);
+            }
+        }
 
         if (
             p.life > p.maxLife ||
@@ -3193,7 +3983,8 @@ function updateEnemyProjectiles(dt) {
 function getDroneCount(withBuff = true) {
     const swarm = playerModifiers.swarmDrones || 0;
     const bonusDrones = withBuff && isBuffActive("droneAssist") ? 2 : 0;
-    return Math.min(MAX_DRONES + swarm, playerModifiers.droneCount + perk("drone") + swarm + bonusDrones);
+    const master = playerModifiers.droneMaster ? 2 : 0;
+    return Math.min(MAX_DRONES + swarm + master, playerModifiers.droneCount + perk("drone") + swarm + master + bonusDrones);
 }
 
 function getDroneCooldown() {
@@ -3245,6 +4036,231 @@ function updateDrones(dt) {
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Drones spéciaux (classes Hangar, Nécromancien, Gardien, Porte-drones)
+// ---------------------------------------------------------------------------
+
+const NECRO_MAX = 8;
+
+function minionDamageMult() {
+    return playerModifiers.droneMaster ? 1.6 : 1;
+}
+
+function wantedMinions(kind) {
+    if (kind === "fighter") return (playerModifiers.hangar ? 3 : 0) + (playerModifiers.droneMaster ? 2 : 0);
+    if (kind === "guard") return playerModifiers.guardian ? 4 : 0;
+    if (kind === "rocket") return playerModifiers.carrier ? 3 : 0;
+    return 0;
+}
+
+function syncMinions() {
+    ["fighter", "guard", "rocket"].forEach((kind) => {
+        const list = minions.filter((m) => m.kind === kind);
+        const wanted = wantedMinions(kind);
+        for (let i = list.length; i < wanted; i += 1) {
+            minions.push({ kind, x: player.x, y: player.y, angle: 0, mode: "orbit", cooldown: 0.4 + i * 0.3, target: null });
+        }
+        for (let i = list.length - 1; i >= wanted; i -= 1) minions.splice(minions.indexOf(list[i]), 1);
+    });
+}
+
+// Nécromancien : un ennemi tué peut revenir en carré allié.
+function maybeRaiseNecro(enemy) {
+    if (!playerModifiers.necromancer || enemy.isBoss) return;
+    if (Math.random() > 0.35) return;
+    const count = minions.filter((m) => m.kind === "necro").length;
+    if (count >= NECRO_MAX + (playerModifiers.droneMaster ? 4 : 0)) return;
+    minions.push({ kind: "necro", x: enemy.x, y: enemy.y, angle: Math.random() * Math.PI * 2, mode: "orbit", cooldown: 0.5, charges: 5, target: null });
+    ring(enemy.x, enemy.y, "#5dffa8", 40, 0.35, 2);
+}
+
+function updateMinions(dt) {
+    syncMinions();
+    const kinds = { fighter: [], guard: [], rocket: [], necro: [] };
+    minions.forEach((m) => kinds[m.kind].push(m));
+    const dmg = getDamage() * minionDamageMult();
+
+    for (let i = minions.length - 1; i >= 0; i -= 1) {
+        const m = minions[i];
+        const group = kinds[m.kind];
+        const index = group.indexOf(m);
+        m.cooldown -= dt;
+
+        if (m.kind === "guard") {
+            // Bouclier en orbite serrée : bloque les balles, brûle au contact.
+            const a = state.time * 2.4 + (Math.PI * 2 * index) / group.length;
+            m.x = player.x + Math.cos(a) * 62;
+            m.y = player.y + Math.sin(a) * 62;
+            m.angle = a;
+            for (let j = enemyProjectiles.length - 1; j >= 0; j -= 1) {
+                const p = enemyProjectiles[j];
+                if (Math.hypot(p.x - m.x, p.y - m.y) < 16 + p.radius) {
+                    burst(p.x, p.y, "#2de2ff", 5, 140, 2);
+                    enemyProjectiles.splice(j, 1);
+                    play("hit", 90);
+                }
+            }
+            [...enemies].forEach((e) => {
+                if (Math.hypot(e.x - m.x, e.y - m.y) < 16 + e.size) damageEnemy(e, dmg * 2.5 * dt);
+            });
+            continue;
+        }
+
+        if (m.kind === "rocket") {
+            const a = -state.time * 0.9 + (Math.PI * 2 * index) / group.length;
+            const tx = player.x + Math.cos(a) * 110;
+            const ty = player.y + Math.sin(a) * 110;
+            const follow = 1 - Math.exp(-10 * dt);
+            m.x += (tx - m.x) * follow;
+            m.y += (ty - m.y) * follow;
+            m.angle = a;
+            if (m.cooldown <= 0) {
+                const target = findNearestEnemy(m.x, m.y);
+                if (target) {
+                    m.cooldown = 1.6 * (playerModifiers.droneMaster ? 0.75 : 1);
+                    createProjectile({
+                        x: m.x,
+                        y: m.y,
+                        angle: Math.atan2(target.y - m.y, target.x - m.x),
+                        speed: 380,
+                        damage: dmg * 1.4,
+                        radius: 6,
+                        life: 2.2,
+                        color: "#ff9a3c",
+                        turnRate: 5,
+                        target,
+                        explode: 75,
+                    });
+                    play("missile", 120);
+                }
+            }
+            continue;
+        }
+
+        // Chasseurs et carrés : orbite, puis foncent sur une cible.
+        if (m.mode === "orbit") {
+            const radius = m.kind === "necro" ? 95 : 80;
+            const a = state.time * 1.6 + (Math.PI * 2 * index) / Math.max(1, group.length) + (m.kind === "necro" ? Math.PI / 4 : 0);
+            const tx = player.x + Math.cos(a) * radius;
+            const ty = player.y + Math.sin(a) * radius;
+            const follow = 1 - Math.exp(-8 * dt);
+            m.x += (tx - m.x) * follow;
+            m.y += (ty - m.y) * follow;
+            m.angle = Math.atan2(ty - m.y, tx - m.x);
+            if (m.cooldown <= 0) {
+                const target = findNearestEnemy(m.x, m.y);
+                if (target && Math.hypot(target.x - player.x, target.y - player.y) < 520) {
+                    m.mode = "dash";
+                    m.target = target;
+                    play("dash", 150);
+                } else {
+                    m.cooldown = 0.3;
+                }
+            }
+        } else if (m.mode === "dash") {
+            const t = m.target;
+            if (!t || t.dead) {
+                m.mode = "orbit";
+                m.cooldown = 0.2;
+                continue;
+            }
+            const dx = t.x - m.x;
+            const dy = t.y - m.y;
+            const d = Math.hypot(dx, dy) || 1;
+            const speed = m.kind === "necro" ? 520 : 680;
+            m.angle = Math.atan2(dy, dx);
+            m.x += (dx / d) * speed * dt;
+            m.y += (dy / d) * speed * dt;
+            if (Math.random() < 0.5) {
+                particles.push({ x: m.x, y: m.y, vx: 0, vy: 0, life: 0, max: 0.25, color: m.kind === "necro" ? "#5dffa8" : "#ff2bd6", size: 2 });
+            }
+            if (d < t.size + 8) {
+                const hit = m.kind === "necro" ? dmg * 1.1 : dmg * 1.8;
+                burst(m.x, m.y, m.kind === "necro" ? "#5dffa8" : "#ff2bd6", 10, 220, 2);
+                damageEnemy(t, hit, { x: (dx / d) * 10, y: (dy / d) * 10 });
+                m.mode = "orbit";
+                m.cooldown = m.kind === "necro" ? 0.7 : 1.1 * (playerModifiers.droneMaster ? 0.75 : 1);
+                if (m.kind === "necro") {
+                    m.charges -= 1;
+                    if (m.charges <= 0) {
+                        burst(m.x, m.y, "#5dffa8", 16, 260, 2);
+                        minions.splice(i, 1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Missiles du Porte-drones : dégâts de zone.
+function flushExplosions() {
+    while (pendingExplosions.length) {
+        const ex = pendingExplosions.shift();
+        ring(ex.x, ex.y, "#ff9a3c", ex.radius, 0.35, 3);
+        burst(ex.x, ex.y, "#ff9a3c", 18, 260, 3);
+        play("mine", 90);
+        [...enemies].forEach((e) => {
+            if (Math.hypot(e.x - ex.x, e.y - ex.y) < ex.radius + e.size) damageEnemy(e, ex.damage);
+        });
+    }
+}
+
+function estimateMinionDps() {
+    const dmg = getDamage() * minionDamageMult();
+    const speed = playerModifiers.droneMaster ? 1 / 0.75 : 1;
+    let dps = 0;
+    dps += wantedMinions("fighter") * ((dmg * 1.8) / 1.6) * speed; // aller-retour compris
+    dps += wantedMinions("rocket") * ((dmg * 1.4) / 1.6) * speed;
+    dps += wantedMinions("guard") * dmg * 0.4;
+    if (playerModifiers.necromancer) dps += dmg * 1.5;
+    return dps;
+}
+
+function drawMinions() {
+    if (minions.length === 0) return;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 12;
+    minions.forEach((m) => {
+        ctx.save();
+        ctx.translate(m.x, m.y);
+        if (m.kind === "fighter") {
+            ctx.rotate(m.angle);
+            ctx.strokeStyle = "#ff2bd6";
+            ctx.shadowColor = "#ff2bd6";
+            ctx.fillStyle = "rgba(255,43,214,0.3)";
+            ctx.beginPath();
+            ctx.moveTo(12, 0);
+            ctx.lineTo(-8, -7);
+            ctx.lineTo(-4, 0);
+            ctx.lineTo(-8, 7);
+            ctx.closePath();
+        } else if (m.kind === "necro") {
+            ctx.rotate(state.time * 3 + m.x * 0.01);
+            ctx.strokeStyle = "#5dffa8";
+            ctx.shadowColor = "#5dffa8";
+            ctx.fillStyle = "rgba(93,255,168,0.25)";
+            ctx.beginPath();
+            ctx.rect(-8, -8, 16, 16);
+        } else if (m.kind === "guard") {
+            ctx.strokeStyle = "#2de2ff";
+            ctx.shadowColor = "#2de2ff";
+            ctx.fillStyle = "rgba(45,226,255,0.25)";
+            polygonPath(ctx, 6, 13, m.angle);
+        } else {
+            ctx.rotate(state.time * 2);
+            ctx.strokeStyle = "#ff9a3c";
+            ctx.shadowColor = "#ff9a3c";
+            ctx.fillStyle = "rgba(255,154,60,0.3)";
+            polygonPath(ctx, 4, 11, 0);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    });
+    ctx.restore();
 }
 
 function updateSpawning(dt) {
@@ -3314,6 +4330,7 @@ function updateBoss(enemy, behavior, dx, dy, dist, dt) {
             enemy.y += (dy / dist) * enemy.speed * 0.75 * dt;
             if (enemy.attackTimer <= 0) {
                 enemy.attackState = { type: "windup", t: 0.8 - enemy.phase * 0.1, angle: Math.atan2(dy, dx) };
+                play("warn");
                 enemy.attackTimer = 5.5;
             }
         }
@@ -3900,6 +4917,7 @@ function breakNemesisShield(enemy) {
     ring(enemy.x, enemy.y, "#8ef0ff", enemy.size * 3, 0.5, 5);
     burst(enemy.x, enemy.y, "#8ef0ff", 30, 320, 3);
     shake(8);
+    play("shieldBreak");
     const drops = lootTypes.filter((t) => t.special);
     const type = drops[Math.floor(Math.random() * drops.length)];
     const a = Math.atan2(player.y - enemy.y, player.x - enemy.x);
@@ -4530,11 +5548,18 @@ function updateEnemies(dt) {
                 // Chaque projectile ne touche une même cible qu'une fois
                 // (avant : la perforation re-touchait l'ennemi à chaque image).
                 p.hit.add(enemy);
+                if (p.explode) {
+                    pendingExplosions.push({ x: p.x, y: p.y, radius: p.explode, damage: p.damage });
+                    projectiles.splice(j, 1);
+                    continue;
+                }
                 const push = 4 + upgrades.impact.level * 5;
                 const len = Math.hypot(p.vx, p.vy) || 1;
                 burst(p.x, p.y, enemy.color, 4, 160, 2);
                 if (p.pierce && p.pierce > 0) {
                     p.pierce -= 1;
+                } else if (p.bounces > 0 && redirectRicochet(p)) {
+                    p.bounces -= 1;
                 } else {
                     projectiles.splice(j, 1);
                 }
@@ -4591,7 +5616,7 @@ function updateSectorFlow(dt) {
         if (Math.hypot(player.x - portal.x, player.y - portal.y) < portal.r + player.radius * 0.5) {
             state.sectorPhase = "exit";
             state.phaseTime = 0;
-            play("sector");
+            play("warp");
             flash("45,226,255", 0.5);
             state.score += 1000 * (state.sectorIndex + 1);
             floatText(portal.x, portal.y - 60, `SECTEUR +${1000 * (state.sectorIndex + 1)}`, "#2de2ff", 12);
@@ -4835,8 +5860,21 @@ function drawPlayer() {
         ctx.restore();
     }
 
+    // Niveau affiché sous le tank
+    if (state.phase === "playing" && scale > 0.5) {
+        ctx.save();
+        ctx.font = `8px ${FONT}`;
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#2de2ff";
+        ctx.shadowColor = "#2de2ff";
+        ctx.shadowBlur = 8;
+        ctx.globalAlpha = 0.85;
+        ctx.fillText(`NIV ${state.level}`, player.x, player.y + player.radius + 22);
+        ctx.restore();
+    }
+
     // Réticule de visée
-    if (!state.trackpadMode && mouse.active && state.phase === "playing") {
+    if (!state.trackpadMode && mouse.active && state.phase === "playing" && !isAimbotOn()) {
         ctx.save();
         ctx.strokeStyle = "rgba(45,226,255,0.6)";
         ctx.lineWidth = 1.5;
@@ -5466,6 +6504,18 @@ function drawOverlayTexts() {
         ctx.restore();
         drawNeonText("PAUSE", cx, cy - 10, 30, "#ffffff");
         drawNeonText("P / Échap pour reprendre", cx, cy + 34, 9, "#b7a6d9");
+        drawNeonText("H : retour à l'accueil", cx, cy + 56, 8, "#b7a6d9");
+        drawNeonText(`Niveau ${state.level} · Secteur ${state.sectorIndex + 1}`, cx, cy - 58, 10, "#2de2ff");
+    }
+
+    if (state.cheated && state.phase === "playing") {
+        ctx.save();
+        ctx.font = `8px ${FONT}`;
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#ff2bd6";
+        ctx.globalAlpha = 0.7;
+        ctx.fillText("TRICHE", canvas.width - 20, canvas.height - 20);
+        ctx.restore();
     }
 
     if (state.flash > 0) {
@@ -5607,6 +6657,8 @@ function step(delta) {
             player.beamOn = false;
         }
         if (fighting) updateClassPulses(delta);
+        // Battement de cœur quand la vie est basse
+        if (fighting && player.health > 0 && player.health / player.maxHealth < 0.3) play("heartbeat", 900);
         // Ralenti : ennemis et balles ennemies à mi-vitesse
         const enemyDelta = delta * enemyTimeScale();
         updateProjectiles(delta);
@@ -5614,7 +6666,9 @@ function step(delta) {
         if (state.sectorPhase !== "exit") updatePickups(delta);
         updateMines(delta);
         updateDrones(delta);
+        updateMinions(delta);
         updateEnemies(enemyDelta);
+        flushExplosions();
         updateCombo(delta);
         updateSectorFlow(delta);
     }
@@ -5637,6 +6691,8 @@ function render() {
     drawEnemyProjectiles();
     drawProjectiles();
     drawDrones();
+    drawMinions();
+    drawAimbotLock();
     drawPlayerBeam();
     drawPlayer();
     drawEffects();
@@ -5670,6 +6726,7 @@ function loop(timestamp) {
     step(delta);
     render();
     updateHUD();
+    updateMusic();
 
     requestAnimationFrame(loop);
 }
@@ -5711,6 +6768,14 @@ window.__game = {
     step,
     togglePause,
     handlePlayerDeath,
+    minions,
+    cheats,
+    aimTrack,
+    music,
+    sound,
+    feedCheatCode,
+    openCheatMenu,
+    classTiers,
 };
 
 resetPlayerModifiers();

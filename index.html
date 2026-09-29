@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NEON DIEP v5.5</title>
+    <title>NEON DIEP v5.6</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
         rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=5.5" />
+    <link rel="stylesheet" href="style.css?v=5.6" />
 </head>
 <body>
     <div class="app-shell">
@@ -20,6 +20,10 @@
             <div class="crt" aria-hidden="true"></div>
             <div class="hud">
                 <div class="hud-row hud-top">
+                    <div class="hud-cell level-cell">
+                        <span>Niveau</span>
+                        <strong id="levelBigDisplay">1</strong>
+                    </div>
                     <div class="hud-cell">
                         <span>Secteur</span>
                         <strong id="sectorDisplay">1</strong>
@@ -60,7 +64,11 @@
                 </div>
                 <div class="hud-buttons">
                     <button id="pauseButton" class="hud-button">Pause</button>
+                    <button id="homeButton" class="hud-button home-button">Accueil</button>
+                </div>
+                <div class="hud-buttons">
                     <button id="soundButton" class="hud-button">Son : on</button>
+                    <button id="musicButton" class="hud-button">Musique : on</button>
                 </div>
             </div>
         </main>
@@ -88,7 +96,7 @@
                 </div>
             </section>
             <div id="upgradeList" class="upgrade-list"></div>
-            <p class="tip">ZQSD / flèches : bouger · souris : viser · tir auto · 1-0 : améliorer · P : pause · M : son</p>
+            <p class="tip">ZQSD / flèches : bouger · souris : viser · tir auto · 1-0 : améliorer · P : pause · H : accueil · M : son · B : musique</p>
         </aside>
     </div>
 
@@ -97,7 +105,7 @@
         <div class="crt" aria-hidden="true"></div>
         <div class="modal title-modal">
             <header class="title-header">
-                <p class="eyebrow">Mini Diep-like · v5.5</p>
+                <p class="eyebrow">Mini Diep-like · v5.6</p>
                 <h1 class="logo" data-text="NEON DIEP">NEON DIEP</h1>
                 <p class="muted">8 secteurs, deux arènes secrètes, puis le mode infini.</p>
                 <p class="best-line">Record : <strong id="menuBestDisplay">0</strong></p>
@@ -144,6 +152,30 @@
                     <span>Mode trackpad : viser avec les flèches, bouger avec ZQSD</span>
                 </label>
             </section>
+            <section class="modal-section">
+                <div class="section-header">
+                    <h3>Son</h3>
+                </div>
+                <label class="volume-row">
+                    <span>Musique</span>
+                    <input type="range" id="musicVolumeRange" min="0" max="100" step="5" value="60" />
+                </label>
+                <label class="volume-row">
+                    <span>Bruitages</span>
+                    <input type="range" id="sfxVolumeRange" min="0" max="100" step="5" value="80" />
+                </label>
+            </section>
+            <details class="modal-section patch-notes">
+                <summary>Patch v5.6 : musique, drones et ricochets</summary>
+                <ul class="patch-list muted">
+                    <li>Musique synthwave de fond générée en direct : calme au menu, plus nerveuse en combat, sombre et rapide contre les boss. B pour la couper, volumes réglables ici.</li>
+                    <li>Plein de nouveaux bruitages : power-ups, changements de phase, ricochets, missiles, bouclier brisé, cœur qui bat quand ta vie est basse, portail, pause…</li>
+                    <li>L'Aim-bot marche vraiment : ton canon verrouille la meilleure cible (le boss en priorité), anticipe ses mouvements et tes balles la suivent.</li>
+                    <li>Nouvelle amélioration permanente : Ricochet. Tes tirs rebondissent sur les murs et repartent vers un autre ennemi après un impact.</li>
+                    <li>Niveau 20 : en plus de l'Overseer, Hangar (chasseurs kamikazes) ou Nécromancien (les ennemis tués reviennent de ton côté). Nouveau palier au niveau 40 : Gardien (drones-boucliers), Porte-drones (missiles) ou Maître des drones.</li>
+                    <li>Ton niveau est affiché en grand dans le HUD et sous ton tank, et le bouton Accueil (ou H) te ramène au menu.</li>
+                </ul>
+            </details>
             <details class="modal-section patch-notes">
                 <summary>Patch v5.5 : Némésis, ton reflet</summary>
                 <ul class="patch-list muted">
@@ -233,10 +265,23 @@
                 <li><strong>1 … 0</strong> dépenser un point d'amélioration</li>
                 <li><strong>P / Échap / Espace</strong> pause</li>
                 <li><strong>M</strong> couper le son</li>
+                <li><strong>B</strong> couper la musique</li>
+                <li><strong>H</strong> retour à l'accueil (appuyer deux fois)</li>
                 <li><strong>Entrée</strong> continuer la sauvegarde (menu)</li>
                 <li><strong>N</strong> nouvelle partie (menu)</li>
             </ul>
             <p class="muted small">Tue des ennemis pour remplir la jauge du secteur. Quand elle est pleine, le boss arrive. Bats-le puis entre dans le portail.</p>
+        </div>
+    </div>
+
+    <div id="cheatOverlay" class="full-overlay hidden">
+        <div class="modal small cheat-modal">
+            <header class="modal-header">
+                <h2 class="glitch" data-text="MODE TRICHE">MODE TRICHE</h2>
+                <button id="closeCheatsButton" class="ghost-button">Fermer</button>
+            </header>
+            <p class="muted small">Chiffres pour activer, Échap pour fermer. Le record n'est pas compté dans une partie trichée.</p>
+            <div id="cheatList" class="cheat-list"></div>
         </div>
     </div>
 
@@ -255,6 +300,6 @@
             <div id="cardOptions" class="class-options cards"></div>
         </div>
     </div>
-    <script src="script.js?v=5.5"></script>
+    <script src="script.js?v=5.6"></script>
 </body>
 </html>
