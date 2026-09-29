@@ -673,6 +673,9 @@ function resetPlayerModifiers() {
     playerModifiers.tankBonusShots = 0;
     playerModifiers.projectileSizeBonus = 0;
     playerModifiers.overseer = false;
+    playerModifiers.fortress = false;
+    playerModifiers.swarmDrones = 0;
+    playerModifiers.droneRateMult = 1;
     drones.length = 0;
 }
 
@@ -701,6 +704,12 @@ const lootTypes = [
     { key: "heal", label: "Soin", color: "#8cf7ff", heal: 28 },
     { key: "droneAssist", label: "Escouade", color: "#ffb35e", duration: 30000 },
     { key: "upgradeOrb", label: "Orbe de maîtrise", color: "#b4ff5e", minLevel: 25 },
+    // Power-ups spéciaux (hexagones)
+    { key: "shieldOrb", label: "Bouclier", color: "#8ef0ff", duration: 12000, special: true },
+    { key: "overdrive", label: "Surcharge", color: "#ff3b6b", duration: 10000, special: true },
+    { key: "nova", label: "Nova", color: "#ffffff", minLevel: 5, special: true },
+    { key: "chrono", label: "Ralenti", color: "#9b5cff", duration: 7000, minLevel: 8, special: true },
+    { key: "prismGun", label: "Laser prisme", color: "#ffe45e", duration: 8000, minLevel: 10, special: true },
 ];
 
 const buffLabels = {
@@ -709,6 +718,10 @@ const buffLabels = {
     tripleXP: { label: "XP x3", color: "#9b5cff" },
     aimbot: { label: "AIM-BOT", color: "#ff2bd6" },
     droneAssist: { label: "ESCOUADE", color: "#ffb35e" },
+    shieldOrb: { label: "BOUCLIER", color: "#8ef0ff" },
+    overdrive: { label: "SURCHARGE", color: "#ff3b6b" },
+    chrono: { label: "RALENTI", color: "#9b5cff" },
+    prismGun: { label: "LASER PRISME", color: "#ffe45e" },
 };
 
 const playerSkins = [
@@ -730,6 +743,8 @@ const classTiers = {
     10: ["destroyer", "droneController"],
     15: ["shotgun", "octoTank"],
     20: ["overseer"],
+    25: ["prismatic", "fortress"],
+    30: ["supernova", "swarm"],
 };
 
 const classDefinitions = {
@@ -801,6 +816,37 @@ const classDefinitions = {
             playerModifiers.damageMultiplier *= 1.15;
             playerModifiers.projectileLifeBonus += 0.4;
             playerModifiers.projectileSpeedMultiplier *= 1.05;
+        },
+    },
+    prismatic: {
+        name: "Prismatique",
+        description: "Un rayon laser arc-en-ciel part du canon 0,7 s toutes les 3 s et traverse tout.",
+        apply() {
+            playerModifiers.damageMultiplier *= 1.1;
+        },
+    },
+    fortress: {
+        name: "Forteresse",
+        description: "+60 PV max, -15 % de dégâts reçus, les ennemis qui te touchent se brûlent.",
+        apply() {
+            playerModifiers.fortress = true;
+            recalcPlayerStats({ refillHealth: false });
+            player.health = Math.min(player.maxHealth, player.health + 60);
+        },
+    },
+    supernova: {
+        name: "Supernova",
+        description: "Toutes les 6 s, une onde de choc efface les balles autour de toi et blesse.",
+        apply() {
+            player.novaTimer = 6;
+        },
+    },
+    swarm: {
+        name: "Essaim",
+        description: "3 drones de plus (7 max) qui tirent 40 % plus vite.",
+        apply() {
+            playerModifiers.swarmDrones = 3;
+            playerModifiers.droneRateMult = 0.6;
         },
     },
 };
@@ -1445,7 +1491,8 @@ function syncDifficultyInputs() {
     difficultyLabel.textContent = getDifficultyConfig().name;
     difficultyRange.value = state.difficultyIndex;
     menuDifficultyRange.value = state.difficultyIndex;
-    menuDifficultyLabel.textContent = getDifficultyConfig().name;
+    const lives = startingLives();
+    menuDifficultyLabel.textContent = `${getDifficultyConfig().name} · ${lives} vie${lives > 1 ? "s" : ""}`;
 }
 
 function updateDifficultyLockState() {
@@ -1495,7 +1542,7 @@ function resetRunState() {
     state.level = 1;
     state.upgradePoints = 0;
     state.xpToNext = 100;
-    state.lives = 3;
+    state.lives = startingLives();
     state.score = 0;
     state.combo = 0;
     state.comboTimer = 0;
@@ -1518,6 +1565,9 @@ function resetRunState() {
         delete activeBuffs[key];
     }
     elapsedTime = 0;
+    state.shieldHp = 0;
+    player.novaTimer = 6;
+    player.beamOn = false;
     overseerMineTimer = 0;
     pickupTimer = 0;
     enemySpawnTimer = 0;
@@ -1557,6 +1607,7 @@ function startChallenge() {
     state.challenge = true;
     state.level = 20;
     state.upgradePoints = 20;
+    recalcPlayerStats({ refillHealth: true }); // bonus de rang du tank
     enterPlaying();
     beginSector(ARENA_SECTOR, { save: false });
     refreshUpgradePanel();
@@ -1916,7 +1967,11 @@ function recalcPlayerStats({ refillHealth = false } = {}) {
     const override = getDifficultyConfig().playerHealthOverride;
     const newMaxHealth =
         override ||
-        BASE_PLAYER_STATS.maxHealth + upgrades.health.level * 20 + perk("armor") * 25;
+        BASE_PLAYER_STATS.maxHealth +
+            upgrades.health.level * 20 +
+            perk("armor") * 25 +
+            (playerModifiers.fortress ? 60 : 0) +
+            tankRank() * 10;
     player.maxHealth = newMaxHealth;
     player.health = refillHealth
         ? newMaxHealth
@@ -1973,7 +2028,11 @@ function getExcessShotBonus() {
 
 function getDamage() {
     const xpBuffBonus = isBuffActive("tripleXP") ? 1.05 : 1;
+    const overdrive = isBuffActive("overdrive") ? 1.5 : 1;
+    const rankBonus = 1 + tankRank() * 0.04;
     return (
+        overdrive *
+        rankBonus *
         player.baseDamage *
         (1 + upgrades.damage.level * 0.15) *
         (1 + perk("cannon") * 0.12) *
@@ -2002,12 +2061,28 @@ function getDamageTakenMultiplier() {
     const level = upgrades.resistance.level || 0;
     const mitigation = Math.min(0.6, level * 0.1);
     const shield = Math.pow(0.9, perk("shield"));
-    return Math.max(0.25, (1 - mitigation) * shield);
+    const fortress = playerModifiers.fortress ? 0.85 : 1;
+    return Math.max(0.25, (1 - mitigation) * shield * fortress);
 }
 
 function applyPlayerDamage(amount, { feedback = true } = {}) {
     if (state.invulnerable > 0) return;
-    const finalDamage = amount * getDamageTakenMultiplier();
+    let finalDamage = amount * getDamageTakenMultiplier();
+    // Le power-up Bouclier encaisse les coups à ta place.
+    if (isBuffActive("shieldOrb") && state.shieldHp > 0) {
+        const absorbed = Math.min(state.shieldHp, finalDamage);
+        state.shieldHp -= absorbed;
+        finalDamage -= absorbed;
+        if (state.shieldHp <= 0) {
+            activeBuffs.shieldOrb = 0;
+            ring(player.x, player.y, "#8ef0ff", 90, 0.4, 3);
+            floatText(player.x, player.y - 40, "BOUCLIER BRISÉ", "#8ef0ff", 9);
+        }
+        if (finalDamage <= 0) {
+            if (feedback) burst(player.x, player.y, "#8ef0ff", 5, 160, 2);
+            return;
+        }
+    }
     player.health -= finalDamage;
     if (player.health < 0) player.health = 0;
     if (feedback) {
@@ -2064,6 +2139,15 @@ function onLevelGained() {
     }
     updateSniperCannonProgression();
     updateTankProgression();
+    const rank = tankRank();
+    if (rank > 0 && state.level === rank * 10) {
+        recalcPlayerStats({ refillHealth: false });
+        player.health = Math.min(player.maxHealth, player.health + 10);
+        const names = ["", "BLINDÉ", "VÉTÉRAN", "ÉLITE", "LÉGENDE"];
+        floatText(player.x, player.y - 72, `ÉVOLUTION : ${names[rank]}`, "#ff2bd6", 12);
+        ring(player.x, player.y, "#ff2bd6", 200, 0.8, 5);
+        burst(player.x, player.y, "#ff2bd6", 40, 360, 3);
+    }
 }
 
 function updateSniperCannonProgression() {
@@ -2208,6 +2292,15 @@ function applyPickupEffect(type) {
         return;
     }
 
+    if (type.key === "nova") {
+        triggerNova(320, 12);
+        return;
+    }
+
+    if (type.key === "shieldOrb") {
+        state.shieldHp = Math.round(player.maxHealth * 0.6);
+    }
+
     if (type.key === "upgradeOrb") {
         const eligible = ["health", "damage", "resistance", "pierce"];
         const candidates = eligible
@@ -2250,6 +2343,151 @@ function applyPickupEffect(type) {
 }
 
 // ---------------------------------------------------------------------------
+// Power-ups spéciaux, laser du joueur, Supernova, évolution du tank
+// ---------------------------------------------------------------------------
+
+// Nova : onde de choc qui efface les balles ennemies et blesse autour.
+function triggerNova(radius, damageMult, color = "#ffffff") {
+    for (let i = enemyProjectiles.length - 1; i >= 0; i -= 1) {
+        const p = enemyProjectiles[i];
+        if (Math.hypot(p.x - player.x, p.y - player.y) < radius) enemyProjectiles.splice(i, 1);
+    }
+    [...enemies].forEach((enemy) => {
+        const d = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+        if (d < radius + enemy.size) {
+            damageEnemy(enemy, getDamage() * damageMult * (enemy.isBoss ? 0.5 : 1));
+        }
+    });
+    ring(player.x, player.y, color, radius, 0.5, 5);
+    burst(player.x, player.y, color, 40, radius * 1.4, 3);
+    shake(8);
+    flash("255,255,255", 0.25);
+    play("bossKill");
+}
+
+// Ralenti : les ennemis et leurs tirs vont deux fois moins vite.
+function enemyTimeScale() {
+    return isBuffActive("chrono") ? 0.5 : 1;
+}
+
+// Laser du joueur : le power-up « Laser prisme » et la classe Prismatique.
+function playerBeamActive() {
+    if (isBuffActive("prismGun")) return true;
+    if (!player.selectedClasses.includes("prismatic")) return false;
+    return (state.time % 3) < 0.7; // la classe tire un rayon 0,7 s toutes les 3 s
+}
+
+function updatePlayerBeam(dt) {
+    player.beamOn = playerBeamActive();
+    if (!player.beamOn) return;
+    const len = 900;
+    const width = 14;
+    const cos = Math.cos(player.angle);
+    const sin = Math.sin(player.angle);
+    // Le power-up remplace les balles (et traverse tout) : 1,3x la puissance
+    // de feu normale. Le rayon de la classe s'ajoute aux balles : 0,9x.
+    const baseDps = isBuffActive("prismGun") ? 1.3 : 0.9;
+    const dps = Math.max(getDamage() * 6, estimateBaseDps()) * baseDps;
+    [...enemies].forEach((enemy) => {
+        const px = enemy.x - player.x;
+        const py = enemy.y - player.y;
+        const along = px * cos + py * sin;
+        const perp = Math.abs(-px * sin + py * cos);
+        if (along > 0 && along < len && perp < width + enemy.size) {
+            // Le bouclier du Bastion arrête aussi le laser s'il est de face.
+            if (enemy.shieldArc) {
+                const diff = Math.atan2(Math.sin(player.angle + Math.PI - enemy.shieldAngle), Math.cos(player.angle + Math.PI - enemy.shieldAngle));
+                if (Math.abs(diff) < enemy.shieldArc / 2) return;
+            }
+            damageEnemy(enemy, dps * dt);
+            if (Math.random() < dt * 20) burst(enemy.x - cos * enemy.size, enemy.y - sin * enemy.size, "#ffffff", 2, 140, 2);
+        }
+    });
+}
+
+function drawPlayerBeam() {
+    if (!player.beamOn || state.phase !== "playing") return;
+    const len = 900;
+    const x2 = player.x + Math.cos(player.angle) * len;
+    const y2 = player.y + Math.sin(player.angle) * len;
+    const color = `hsl(${(state.time * 200) % 360}, 100%, 62%)`;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 26;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 22 + Math.sin(state.time * 40) * 3;
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 6;
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Classe Supernova : onde automatique toutes les 6 s.
+function updateClassPulses(dt) {
+    if (!player.selectedClasses.includes("supernova")) return;
+    player.novaTimer = (player.novaTimer ?? 6) - dt;
+    if (player.novaTimer <= 0) {
+        player.novaTimer = 6;
+        triggerNova(240, 5, "#ffe45e");
+    }
+}
+
+// Rang du tank : il évolue visuellement tous les 10 niveaux.
+function tankRank() {
+    return Math.min(4, Math.floor(state.level / 10));
+}
+
+function drawTankEvolution(skin) {
+    const rank = tankRank();
+    if (rank <= 0) return;
+    ctx.save();
+    ctx.rotate(-player.angle); // les ornements ne tournent pas avec le canon
+    for (let r = 0; r < Math.min(rank, 2); r += 1) {
+        ctx.save();
+        ctx.rotate(state.time * (r % 2 ? -1.2 : 0.8));
+        ctx.strokeStyle = r % 2 ? skin.cannon : skin.body;
+        ctx.shadowColor = ctx.strokeStyle;
+        ctx.shadowBlur = 12;
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius + 8 + r * 7, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+    if (rank >= 3) {
+        // Couronne de pointes néon
+        const spikes = rank >= 4 ? 10 : 6;
+        ctx.save();
+        ctx.rotate(state.time * 0.5);
+        ctx.fillStyle = skin.cannon;
+        ctx.shadowColor = skin.cannon;
+        ctx.shadowBlur = 14;
+        for (let k = 0; k < spikes; k += 1) {
+            ctx.save();
+            ctx.rotate((Math.PI * 2 * k) / spikes);
+            ctx.beginPath();
+            ctx.moveTo(player.radius + 24, 0);
+            ctx.lineTo(player.radius + 16, -4);
+            ctx.lineTo(player.radius + 16, 4);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
 // Ennemis
 // ---------------------------------------------------------------------------
 
@@ -2284,20 +2522,59 @@ function pickSpawnPoint(size) {
 }
 
 // Dégâts par seconde théoriques du joueur (tir principal + drones).
-function estimatePlayerDps() {
+function estimateBaseDps() {
     // Les plombs du Shotgun (70 % de dégâts, cône large) touchent rarement tous.
     const perShot = playerModifiers.shotgun ? 0.7 * 0.55 : 1;
     const volley = getDamage() * getShotCount() * perShot;
     const main = volley * (1000 / getFireCooldown());
-    const droneCount = Math.min(MAX_DRONES, playerModifiers.droneCount + perk("drone"));
     const droneDps =
-        (droneCount * playerModifiers.droneDamage * (1 + perk("cannon") * 0.12) * 1000) /
-        playerModifiers.droneFireCooldown;
+        (getDroneCount(false) * playerModifiers.droneDamage * (1 + perk("cannon") * 0.12) * 1000) /
+        getDroneCooldown();
     return main + droneDps;
 }
 
+// Puissance de feu « permanente » : un boss qui apparaît pendant une
+// Surcharge ou une Cadence ++ n'en devient pas plus coriace.
+const TEMP_DAMAGE_BUFFS = ["overdrive", "fireRate", "tripleXP"];
+
+function estimatePlayerDps() {
+    const saved = TEMP_DAMAGE_BUFFS.map((key) => activeBuffs[key]);
+    TEMP_DAMAGE_BUFFS.forEach((key) => (activeBuffs[key] = 0));
+    const base = estimateBaseDps();
+    TEMP_DAMAGE_BUFFS.forEach((key, i) => (activeBuffs[key] = saved[i]));
+    // Classe Prismatique : rayon 0,7 s toutes les 3 s.
+    const beam = player.selectedClasses.includes("prismatic") ? base * 0.9 * (0.7 / 3) : 0;
+    return base + beam;
+}
+
+// Réglages des boss par difficulté : dégâts, vitesse d'attaque, vie,
+// temps d'alerte des lasers en plus et nombre de lasers en plus/moins.
+const BOSS_PROFILES = [
+    { dmg: 0.3, rate: 0.6, hp: 0.55, warn: 0.6, beams: -2, heal: 0.6 }, // Jeu d'enfant
+    { dmg: 0.5, rate: 0.72, hp: 0.7, warn: 0.4, beams: -1, heal: 0.5 }, // Facile
+    { dmg: 0.7, rate: 0.85, hp: 0.85, warn: 0.2, beams: 0, heal: 0.4 }, // Moyen
+    { dmg: 0.9, rate: 0.95, hp: 0.9, warn: 0.1, beams: 0, heal: 0.3 }, // Difficile
+    { dmg: 1.05, rate: 1.05, hp: 0.85, warn: 0, beams: 1, heal: 0.25 }, // Hard
+    { dmg: 1.2, rate: 1.15, hp: 0.85, warn: -0.1, beams: 2, heal: 0.2 }, // Hardcore
+    { dmg: 1.4, rate: 1.25, hp: 0.85, warn: -0.15, beams: 2, heal: 0.15 }, // Impossible
+    { dmg: 1.6, rate: 1.35, hp: 0.9, warn: -0.2, beams: 3, heal: 0.1 }, // Malade
+    { dmg: 1, rate: 1.35, hp: 0.9, warn: -0.2, beams: 3, heal: 0 }, // 1 PV
+];
+
+function bossProfile() {
+    return BOSS_PROFILES[Math.min(BOSS_PROFILES.length - 1, state.difficultyIndex)];
+}
+
+// Vies de départ selon la difficulté.
+const LIVES_BY_DIFFICULTY = [7, 5, 4, 3, 3, 2, 2, 1, 1];
+
+function startingLives() {
+    return LIVES_BY_DIFFICULTY[Math.min(LIVES_BY_DIFFICULTY.length - 1, state.difficultyIndex)];
+}
+
 function bossRage(enemy) {
-    return enemy.phase === 3 ? 1.75 : enemy.phase === 2 ? 1.35 : 1;
+    const phaseRage = enemy.phase === 3 ? 1.75 : enemy.phase === 2 ? 1.35 : 1;
+    return phaseRage * (enemy.rateMult || 1);
 }
 
 function bossShot(enemy, angle, { speed = 220, damage = 12, radius = 6, from = enemy, ...extra } = {}) {
@@ -2335,9 +2612,12 @@ function updateBossPhase(enemy) {
     bossRing(enemy, 20 + enemy.phase * 4, Math.random() * Math.PI, { speed: 200, damage: 14, radius: 7 });
     const minions = getSector().arena ? 0 : 1 + enemy.phase;
     if (getSector().arena) {
-        // Pas de bonus dans l'arène : un petit soin à chaque phase à la place.
-        player.health = Math.min(player.maxHealth, player.health + player.maxHealth * 0.3);
-        floatText(player.x, player.y - 40, "+30 % PV", "#5dffa8", 11);
+        // Pas de bonus dans l'arène : un soin à chaque phase à la place.
+        const heal = bossProfile().heal;
+        if (heal > 0) {
+            player.health = Math.min(player.maxHealth, player.health + player.maxHealth * heal);
+            floatText(player.x, player.y - 40, `+${Math.round(heal * 100)} % PV`, "#5dffa8", 11);
+        }
     }
     if (enemy.behavior === "bossBlackPrism") {
         // Supernova : étoile de lasers depuis le cœur
@@ -2369,7 +2649,8 @@ function spawnEnemy(isBoss = false) {
             : pickSpawnPoint(boss.size);
         const health =
             Math.max(boss.health * scaling * bossHealthBoost, estimatePlayerDps() * minFightSeconds) *
-            (boss.hpMult || 1);
+            (boss.hpMult || 1) *
+            bossProfile().hp;
         enemies.push({
             ...boss,
             x: spawn.x,
@@ -2381,7 +2662,10 @@ function spawnEnemy(isBoss = false) {
             isBoss: true,
             phase: 1,
             phaseShield: 0,
-            bulletDamage: 0.7 + state.sectorIndex * 0.2,
+            bulletDamage: (0.7 + state.sectorIndex * 0.2) * bossProfile().dmg,
+            rateMult: bossProfile().rate,
+            warnBonus: bossProfile().warn,
+            beamDelta: bossProfile().beams,
             density: Math.min(4, state.sectorIndex), // balles en plus au fil des secteurs
             spin: 0,
             droneSwarm: [],
@@ -2606,6 +2890,7 @@ function findNearestEnemy(x, y) {
 }
 
 function shoot() {
+    if (isBuffActive("prismGun")) return; // le laser remplace les balles
     if (player.shotTimer > 0) return;
     player.shotTimer = getFireCooldown() / 1000;
     player.recoil = 1;
@@ -2859,12 +3144,18 @@ function updateEnemyProjectiles(dt) {
     }
 }
 
+function getDroneCount(withBuff = true) {
+    const swarm = playerModifiers.swarmDrones || 0;
+    const bonusDrones = withBuff && isBuffActive("droneAssist") ? 2 : 0;
+    return Math.min(MAX_DRONES + swarm, playerModifiers.droneCount + perk("drone") + swarm + bonusDrones);
+}
+
+function getDroneCooldown() {
+    return playerModifiers.droneFireCooldown * (playerModifiers.droneRateMult || 1);
+}
+
 function updateDrones(dt) {
-    const bonusDrones = isBuffActive("droneAssist") ? 2 : 0;
-    const desiredCount = Math.min(
-        MAX_DRONES,
-        playerModifiers.droneCount + perk("drone") + bonusDrones
-    );
+    const desiredCount = getDroneCount();
 
     if (desiredCount <= 0) {
         drones.length = 0;
@@ -2904,7 +3195,7 @@ function updateDrones(dt) {
                     homingStrength: 0.05,
                     color: "#ffe45e",
                 });
-                drone.cooldown = playerModifiers.droneFireCooldown;
+                drone.cooldown = getDroneCooldown();
             }
         }
     });
@@ -3122,7 +3413,7 @@ function updateBoss(enemy, behavior, dx, dy, dist, dt) {
         enemy.y += (ty / td) * Math.min(td, enemy.speed * dt);
         if (enemy.beams.length === 0 && enemy.attackTimer <= 0) {
             const aim = Math.atan2(dy, dx);
-            const count = enemy.phase === 1 ? 2 : enemy.phase === 2 ? 4 : 6;
+            const count = Math.max(1, (enemy.phase === 1 ? 2 : enemy.phase === 2 ? 4 : 6) + Math.min(0, enemy.beamDelta || 0));
             const spin = enemy.phase === 1 ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.35 + enemy.phase * 0.1);
             for (let k = 0; k < count; k += 1) {
                 const angle = enemy.phase === 1 ? aim + (k === 0 ? 0 : 0.5) : aim + ((Math.PI * 2) / count) * k + 0.25;
@@ -3255,8 +3546,8 @@ function updateBlackPrism(enemy, dx, dy, dt, rage) {
         const aim = Math.atan2(dy, dx);
         if (kind === "rosace") {
             // Rosace : 6 / 8 / 10 lasers qui tournent (et s'inversent en phase 2+)
-            const count = 4 + enemy.phase * 2;
-            const spin = (Math.random() < 0.5 ? -1 : 1) * (0.55 + enemy.phase * 0.12);
+            const count = Math.max(3, 4 + enemy.phase * 2 + (enemy.beamDelta || 0));
+            const spin = (Math.random() < 0.5 ? -1 : 1) * (0.55 + enemy.phase * 0.12) * Math.min(1, enemy.rateMult || 1);
             for (let k = 0; k < count; k += 1) {
                 enemy.beams.push({
                     angle: aim + Math.PI / count + ((Math.PI * 2) / count) * k,
@@ -3272,7 +3563,7 @@ function updateBlackPrism(enemy, dx, dy, dt, rage) {
             enemy.attackTimer = 1.4;
         } else if (kind === "tenaille") {
             // Tenaille : des paires de lasers qui se referment sur le joueur
-            const pairs = enemy.phase >= 2 ? 2 : 1;
+            const pairs = enemy.phase >= 2 && (enemy.beamDelta || 0) >= 0 ? 2 : 1;
             for (let p = 0; p < pairs; p += 1) {
                 const open = 1.3 + p * 0.5;
                 const speed = 1.15 + p * 0.25;
@@ -3286,14 +3577,14 @@ function updateBlackPrism(enemy, dx, dy, dt, rage) {
             enemy.attackTimer = 1.2;
         } else {
             // Grille : lasers verticaux (puis horizontaux) depuis les bords, avec un trou
-            const cols = 7;
+            const cols = Math.max(5, 7 + Math.min(1, enemy.beamDelta || 0));
             const gap = Math.floor(Math.random() * cols);
             for (let k = 0; k < cols; k += 1) {
                 if (k === gap) continue;
                 const x = (w / cols) * (k + 0.5);
                 enemy.beams.push({ ox: x, oy: -10, angle: Math.PI / 2, spin: 0, warn: 1.0, fire: 0.7, width: 22, hue: k * 50, len: h + 40, loud: k === 0 });
             }
-            if (enemy.phase >= 3) {
+            if (enemy.phase >= 3 && (enemy.beamDelta || 0) >= 0) {
                 const rows = 5;
                 const gapRow = Math.floor(Math.random() * rows);
                 for (let k = 0; k < rows; k += 1) {
@@ -3308,11 +3599,12 @@ function updateBlackPrism(enemy, dx, dy, dt, rage) {
 
     // En fureur : deux éclats satellites qui balaient sans arrêt.
     if (enemy.phase >= 3 && !enemy.beams.some((b) => b.orbit)) {
-        for (let k = 0; k < 2; k += 1) {
+        const shards = (enemy.beamDelta || 0) < 0 ? 1 : 2;
+        for (let k = 0; k < shards; k += 1) {
             enemy.beams.push({
-                orbit: { r: 190, a: Math.PI * k, speed: 0.9 },
+                orbit: { r: 190, a: Math.PI * k, speed: 0.9 * Math.min(1, enemy.rateMult || 1) },
                 angle: Math.PI * k + Math.PI / 2,
-                spin: -0.8,
+                spin: -0.8 * Math.min(1, enemy.rateMult || 1),
                 warn: 1.2,
                 fire: 9999,
                 width: 9,
@@ -3326,7 +3618,7 @@ function updateBlackPrism(enemy, dx, dy, dt, rage) {
     if (enemy.shootTimer <= 0) {
         enemy.shootTimer = 1400 / rage;
         enemy.spin = (enemy.spin || 0) + 0.35;
-        const count = 10 + enemy.phase * 2;
+        const count = Math.max(6, 10 + enemy.phase * 2 + (enemy.beamDelta || 0) * 2);
         for (let k = 0; k < count; k += 1) {
             bossShot(enemy, enemy.spin + ((Math.PI * 2) / count) * k, {
                 speed: 190,
@@ -3353,6 +3645,11 @@ function updateBeams(enemy, dt) {
     if (!enemy.beams || enemy.beams.length === 0) return;
     for (let i = enemy.beams.length - 1; i >= 0; i -= 1) {
         const beam = enemy.beams[i];
+        if (!beam.tuned) {
+            // Plus de temps pour réagir dans les difficultés faciles
+            beam.tuned = true;
+            beam.warn = Math.max(0.35, beam.warn + (enemy.warnBonus || 0));
+        }
         if (beam.orbit) beam.orbit.a += beam.orbit.speed * dt;
         if (beam.warn > 0) {
             beam.warn -= dt;
@@ -3578,13 +3875,17 @@ function updateEnemies(dt) {
             player.x += nx * overlap * 0.1;
             player.y += ny * overlap * 0.1;
             const contactDamage = enemy.isBoss
-                ? 30 + state.sectorIndex * 3
+                ? (30 + state.sectorIndex * 3) * bossProfile().dmg
                 : (behavior === "rusher" ? 14 : 8) * sectorDamageMult();
             applyPlayerDamage(contactDamage * dt, { feedback: false });
             if (state.invulnerable <= 0) {
                 play("hurt", 350);
                 shake(3);
                 flash("255,59,107", 0.12);
+            }
+            if (playerModifiers.fortress) {
+                damageEnemy(enemy, getDamage() * 3 * dt);
+                if (enemy.dead) continue;
             }
         }
 
@@ -3863,6 +4164,7 @@ function drawPlayer() {
     ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    drawTankEvolution(skin);
     ctx.shadowBlur = 0;
     ctx.fillStyle = skin.body;
     ctx.globalAlpha = 0.85;
@@ -3871,6 +4173,22 @@ function drawPlayer() {
     ctx.fill();
 
     ctx.restore();
+
+    // Bulle du power-up Bouclier
+    if (isBuffActive("shieldOrb") && state.shieldHp > 0) {
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.strokeStyle = "#8ef0ff";
+        ctx.shadowColor = "#8ef0ff";
+        ctx.shadowBlur = 18;
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.45 + 0.35 * (state.shieldHp / Math.max(1, player.maxHealth * 0.6));
+        ctx.fillStyle = "rgba(142,240,255,0.08)";
+        polygonPath(ctx, 6, player.radius + 16, state.time * 0.8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
 
     // Réticule de visée
     if (!state.trackpadMode && mouse.active && state.phase === "playing") {
@@ -4213,7 +4531,7 @@ function drawPickups() {
         ctx.shadowBlur = 18;
         ctx.lineWidth = 2.5;
         ctx.fillStyle = `rgba(${hexToRgb(pickup.type.color)},0.25)`;
-        polygonPath(ctx, 4, 13, pickup.pulse * 0.5);
+        polygonPath(ctx, pickup.type.special ? 6 : 4, pickup.type.special ? 15 : 13, pickup.pulse * 0.5);
         ctx.fill();
         ctx.stroke();
         ctx.shadowBlur = 0;
@@ -4627,13 +4945,21 @@ function step(delta) {
         if (fighting) elapsedTime += delta;
         if (state.sectorPhase !== "exit") updatePlayer(delta);
         const arenaIntro = state.sectorPhase === "intro" && getSector().arena;
-        if (fighting || (state.sectorPhase === "intro" && !arenaIntro)) shoot();
+        if (fighting || (state.sectorPhase === "intro" && !arenaIntro)) {
+            shoot();
+            updatePlayerBeam(delta);
+        } else {
+            player.beamOn = false;
+        }
+        if (fighting) updateClassPulses(delta);
+        // Ralenti : ennemis et balles ennemies à mi-vitesse
+        const enemyDelta = delta * enemyTimeScale();
         updateProjectiles(delta);
-        updateEnemyProjectiles(delta);
+        updateEnemyProjectiles(enemyDelta);
         if (state.sectorPhase !== "exit") updatePickups(delta);
         updateMines(delta);
         updateDrones(delta);
-        updateEnemies(delta);
+        updateEnemies(enemyDelta);
         updateCombo(delta);
         updateSectorFlow(delta);
     }
@@ -4656,6 +4982,7 @@ function render() {
     drawEnemyProjectiles();
     drawProjectiles();
     drawDrones();
+    drawPlayerBeam();
     drawPlayer();
     drawEffects();
     ctx.restore();
@@ -4719,6 +5046,10 @@ window.__game = {
     estimatePlayerDps,
     getShotCount,
     getFireCooldown,
+    applyPickupEffect,
+    lootTypes,
+    activeBuffs,
+    drones,
     applyPerk,
     setDifficulty,
     spendUpgradePoint,

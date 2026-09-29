@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NEON DIEP v5.3</title>
+    <title>NEON DIEP v5.4</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
         rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=5.3" />
+    <link rel="stylesheet" href="style.css?v=5.4" />
 </head>
 <body>
     <div class="app-shell">
@@ -97,7 +97,7 @@
         <div class="crt" aria-hidden="true"></div>
         <div class="modal title-modal">
             <header class="title-header">
-                <p class="eyebrow">Mini Diep-like · v5.3</p>
+                <p class="eyebrow">Mini Diep-like · v5.4</p>
                 <h1 class="logo" data-text="NEON DIEP">NEON DIEP</h1>
                 <p class="muted">8 secteurs, une arène secrète, puis le mode infini.</p>
                 <p class="best-line">Record : <strong id="menuBestDisplay">0</strong></p>
@@ -143,6 +143,16 @@
                     <span>Mode trackpad : viser avec les flèches, bouger avec ZQSD</span>
                 </label>
             </section>
+            <details class="modal-section patch-notes">
+                <summary>Patch v5.4 : difficulté des boss, power-ups et évolutions</summary>
+                <ul class="patch-list muted">
+                    <li>Les boss suivent enfin la difficulté : en Jeu d'enfant ils tapent beaucoup moins fort, tirent moins vite, ont moins de vie et de lasers, et leurs lasers préviennent plus longtemps. Plus c'est dur, plus ils sont nerveux (le Prisme Noir ajoute des lasers à partir de Hard).</li>
+                    <li>Vies selon la difficulté : 7 en Jeu d'enfant, 5 en Facile, 4 en Moyen, 3 en Difficile et Hard, 2 en Hardcore et Impossible, 1 au-delà.</li>
+                    <li>Nouveaux power-ups (hexagones) : Bouclier (encaisse 60 % de ta vie), Surcharge (+50 % de dégâts), Nova (efface les balles autour de toi et blesse), Ralenti (ennemis à mi-vitesse) et Laser prisme (ton canon devient un rayon arc-en-ciel qui traverse tout).</li>
+                    <li>Nouvelles classes : au niveau 25, Prismatique (rayon laser périodique) ou Forteresse (+60 PV, -15 % de dégâts, épines) ; au niveau 30, Supernova (onde de choc toutes les 6 s) ou Essaim (7 drones rapides).</li>
+                    <li>Ton tank évolue tous les 10 niveaux (Blindé, Vétéran, Élite, Légende) : anneaux puis couronne néon, +4 % de dégâts et +10 PV par rang.</li>
+                </ul>
+            </details>
             <details class="modal-section patch-notes">
                 <summary>Patch v5.3 : l'Arène Prismatique</summary>
                 <ul class="patch-list muted">
@@ -235,6 +245,6 @@
             <div id="cardOptions" class="class-options cards"></div>
         </div>
     </div>
-    <script src="script.js?v=5.3"></script>
+    <script src="script.js?v=5.4"></script>
 </body>
 </html>
