@@ -2,15 +2,16 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8" />
+    <meta http-equiv="Cache-Control" content="no-cache" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NEON DIEP v5.1</title>
+    <title>NEON DIEP v5.2</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
         rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=5.2" />
 </head>
 <body>
     <div class="app-shell">
@@ -96,7 +97,7 @@
         <div class="crt" aria-hidden="true"></div>
         <div class="modal title-modal">
             <header class="title-header">
-                <p class="eyebrow">Mini Diep-like · v5.1</p>
+                <p class="eyebrow">Mini Diep-like · v5.2</p>
                 <h1 class="logo" data-text="NEON DIEP">NEON DIEP</h1>
                 <p class="muted">8 secteurs, des boss, puis le mode infini.</p>
                 <p class="best-line">Record : <strong id="menuBestDisplay">0</strong></p>
@@ -141,6 +142,15 @@
                     <span>Mode trackpad : viser avec les flèches, bouger avec ZQSD</span>
                 </label>
             </section>
+            <details class="modal-section patch-notes">
+                <summary>Patch v5.2 : 5 nouveaux boss et rééquilibrage</summary>
+                <ul class="patch-list muted">
+                    <li>Un boss différent par secteur : Titan, Spectre, Cyclone, puis Hydre (balles courbes), Prisme (lasers tournants), Reine Essaim (frelons et orbes chercheuses), Bastion (bouclier à contourner, il surchauffe parfois) et Oméga (lasers, puis gravité qui t'aspire).</li>
+                    <li>Cadence de tir : les bonus s'additionnent au lieu de se multiplier (+8 % par niveau, 8 niveaux max, plancher 150 ms).</li>
+                    <li>Dégâts : +15 % par niveau (au lieu de +25 %), Canon lourd +12 % (5 max), Gâchette +6 % (4 max), Machine Gun un peu moins fort.</li>
+                    <li>Ennemis plus résistants, plus nombreux (par groupes en fin de partie), qui frappent plus fort à chaque secteur, et les tireurs apparaissent vraiment dans les derniers secteurs.</li>
+                </ul>
+            </details>
             <details class="modal-section patch-notes">
                 <summary>Patch v5.1 : boss enragés</summary>
                 <ul class="patch-list muted">
@@ -215,6 +225,6 @@
             <div id="cardOptions" class="class-options cards"></div>
         </div>
     </div>
-    <script src="script.js"></script>
+    <script src="script.js?v=5.2"></script>
 </body>
 </html>

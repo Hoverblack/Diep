@@ -108,8 +108,8 @@ const state = {
 const upgrades = {
     fireRate: {
         label: "Cadence de tir",
-        description: "Réduit le délai entre les tirs.",
-        maxLevel: 10,
+        description: "+8 % de cadence par niveau.",
+        maxLevel: 8,
         level: 0,
     },
     multiShot: {
@@ -138,7 +138,7 @@ const upgrades = {
     },
     damage: {
         label: "Dégâts",
-        description: "Augmente les dégâts des projectiles.",
+        description: "+15 % de dégâts par niveau.",
         maxLevel: 8,
         level: 0,
     },
@@ -318,7 +318,7 @@ const drones = [];
 const mines = [];
 
 let enemySpawnTimer = 0;
-const enemySpawnInterval = 1200;
+const enemySpawnInterval = 900;
 let elapsedTime = 0;
 let pickupTimer = 0;
 const pickupInterval = 9000;
@@ -579,7 +579,7 @@ function getSector(index = state.sectorIndex) {
 
 // Multiplicateurs de menace liés au secteur.
 function sectorHealthMult() {
-    return 1 + state.sectorIndex * 0.16;
+    return 1 + state.sectorIndex * 0.3;
 }
 
 function sectorSpeedMult() {
@@ -587,7 +587,12 @@ function sectorSpeedMult() {
 }
 
 function sectorSpawnMult() {
-    return 1 + state.sectorIndex * 0.1;
+    return 1 + state.sectorIndex * 0.2;
+}
+
+// Les ennemis frappent plus fort au fil des secteurs.
+function sectorDamageMult() {
+    return 1 + state.sectorIndex * 0.12;
 }
 
 function getSectorGoal() {
@@ -602,8 +607,8 @@ function getSectorGoal() {
 
 const perkDefinitions = {
     armor: { icon: "⬢", name: "Blindage", description: "+25 PV max et soin complet.", max: 6 },
-    cannon: { icon: "✸", name: "Canon lourd", description: "+15 % de dégâts.", max: 8 },
-    trigger: { icon: "⚡", name: "Gâchette", description: "Tirs 8 % plus rapides.", max: 6 },
+    cannon: { icon: "✸", name: "Canon lourd", description: "+12 % de dégâts.", max: 5 },
+    trigger: { icon: "⚡", name: "Gâchette", description: "+6 % de cadence.", max: 4 },
     thrusters: { icon: "➤", name: "Réacteurs", description: "+8 % de vitesse de déplacement.", max: 5 },
     magnet: { icon: "◎", name: "Aimant", description: "Attire les bonus de plus loin.", max: 3 },
     regen: { icon: "✚", name: "Nanobots", description: "Régénère 1,5 PV par seconde.", max: 4 },
@@ -737,8 +742,8 @@ const classDefinitions = {
         name: "Machine Gun",
         description: "Cadence +, un projectile de plus.",
         apply() {
-            playerModifiers.fireRateMultiplier *= 0.75;
-            playerModifiers.damageMultiplier *= 0.9;
+            playerModifiers.fireRateMultiplier *= 0.8;
+            playerModifiers.damageMultiplier *= 0.85;
             playerModifiers.extraShotCount += 1;
         },
     },
@@ -928,6 +933,63 @@ const bossConfigs = [
         speed: 90,
         behavior: "bossSpiral",
     },
+    {
+        id: "hydra",
+        name: "Hydre",
+        shape: "pentagon",
+        color: "#5dffa8",
+        size: 52,
+        health: 760,
+        xp: 240,
+        speed: 120,
+        behavior: "bossHydra",
+    },
+    {
+        id: "prism",
+        name: "Prisme",
+        shape: "diamond",
+        color: "#ffe45e",
+        size: 54,
+        health: 800,
+        xp: 260,
+        speed: 70,
+        behavior: "bossPrism",
+    },
+    {
+        id: "queen",
+        name: "Reine Essaim",
+        shape: "triangle",
+        color: "#ff2bd6",
+        size: 50,
+        health: 740,
+        xp: 280,
+        speed: 110,
+        behavior: "bossQueen",
+    },
+    {
+        id: "bastion",
+        name: "Bastion",
+        shape: "square",
+        color: "#7d9bff",
+        size: 56,
+        health: 900,
+        xp: 300,
+        speed: 65,
+        behavior: "bossBastion",
+        hpMult: 0.6, // son bouclier bloque une bonne partie des tirs
+    },
+    {
+        id: "omega",
+        name: "Oméga",
+        shape: "octagon",
+        color: "#ff3b6b",
+        size: 68,
+        health: 1100,
+        xp: 400,
+        speed: 75,
+        behavior: "bossOmega",
+        hpMult: 1.2, // boss final
+    },
 ];
 
 function getArchetypeWeight(type, difficultyIndex) {
@@ -939,13 +1001,18 @@ function getArchetypeWeight(type, difficultyIndex) {
         let weight = type.weightByDifficulty[clampedIndex] ?? 0;
         const shooterBehaviors = ["shooterSingle", "shooterDouble", "shooterSix"];
         if (shooterBehaviors.includes(type.behavior)) {
+            let damp = 1;
             if (difficultyIndex <= 1) {
-                weight *= 0.08; // quasi nul en Jeu d'enfant / Facile
+                damp = 0.08; // quasi nul en Jeu d'enfant / Facile
             } else if (difficultyIndex === 2) {
-                weight *= 0.14; // très rare en Moyen
+                damp = 0.14; // rare en Moyen au début
             } else if (difficultyIndex === 3) {
-                weight *= 0.4; // réduit en Difficile
+                damp = 0.4; // réduit en Difficile
             }
+            // Les tireurs deviennent courants dans les derniers secteurs
+            // (avant, en Moyen, on n'en voyait presque jamais).
+            const lateGame = Math.min(1, state.sectorIndex / 6) * (difficultyIndex <= 1 ? 0.3 : 0.6);
+            weight = weight * (damp + (1 - damp) * lateGame) + lateGame * 0.5;
         }
         return weight;
     }
@@ -1773,21 +1840,25 @@ function recalcPlayerStats({ refillHealth = false } = {}) {
         : Math.min(newMaxHealth, ratio * newMaxHealth);
 }
 
+// Cadence : les bonus s'additionnent (avant ils se multipliaient et tout
+// le monde atteignait le plancher dès le milieu de partie).
+const MIN_FIRE_COOLDOWN = 150;
+
+function getFireRateBonus() {
+    return (
+        1 +
+        upgrades.fireRate.level * 0.08 +
+        upgrades.overclock.level * 0.05 +
+        perk("trigger") * 0.06
+    );
+}
+
 function getFireCooldown() {
-    const level = upgrades.fireRate.level;
-    const reduction = 0.1 * level; // -6 % par niveau, plancher à 40 %
-    const multiplier = Math.max(0.4, 1 - reduction * 0.6);
-    const buffMultiplier = isBuffActive("fireRate") ? 0.5 : 1;
-    const overclock = Math.max(0.55, 1 - upgrades.overclock.level * 0.06);
-    const triggerPerk = Math.pow(0.92, perk("trigger"));
+    const buff = isBuffActive("fireRate") ? 1.4 : 1;
     return Math.max(
-        130,
-        player.baseFireCooldown *
-            multiplier *
-            playerModifiers.fireRateMultiplier *
-            buffMultiplier *
-            overclock *
-            triggerPerk
+        MIN_FIRE_COOLDOWN,
+        (player.baseFireCooldown * playerModifiers.fireRateMultiplier) /
+            (getFireRateBonus() * buff)
     );
 }
 
@@ -1821,8 +1892,8 @@ function getDamage() {
     const xpBuffBonus = isBuffActive("tripleXP") ? 1.05 : 1;
     return (
         player.baseDamage *
-        (1 + upgrades.damage.level * 0.25) *
-        (1 + perk("cannon") * 0.15) *
+        (1 + upgrades.damage.level * 0.15) *
+        (1 + perk("cannon") * 0.12) *
         playerModifiers.damageMultiplier *
         getExcessShotBonus() *
         xpBuffBonus
@@ -2137,7 +2208,7 @@ function estimatePlayerDps() {
     const main = volley * (1000 / getFireCooldown());
     const droneCount = Math.min(MAX_DRONES, playerModifiers.droneCount + perk("drone"));
     const droneDps =
-        (droneCount * playerModifiers.droneDamage * (1 + perk("cannon") * 0.15) * 1000) /
+        (droneCount * playerModifiers.droneDamage * (1 + perk("cannon") * 0.12) * 1000) /
         playerModifiers.droneFireCooldown;
     return main + droneDps;
 }
@@ -2146,8 +2217,10 @@ function bossRage(enemy) {
     return enemy.phase === 3 ? 1.75 : enemy.phase === 2 ? 1.35 : 1;
 }
 
-function bossShot(enemy, angle, { speed = 220, damage = 12, radius = 6, from = enemy } = {}) {
+function bossShot(enemy, angle, { speed = 220, damage = 12, radius = 6, from = enemy, ...extra } = {}) {
     spawnEnemyProjectile(from, angle, {
+        ...extra,
+        scaled: true,
         speed: speed * (1 + (enemy.phase - 1) * 0.08),
         damage: damage * enemy.bulletDamage,
         radius,
@@ -2198,10 +2271,9 @@ function spawnEnemy(isBoss = false) {
         const toughness = Math.min(1.8, Math.max(0.7, diff.enemyHealthMultiplier));
         const minFightSeconds = (12 + state.sectorIndex * 3.5) * toughness;
         const spawn = pickSpawnPoint(boss.size);
-        const health = Math.max(
-            boss.health * scaling * bossHealthBoost,
-            estimatePlayerDps() * minFightSeconds
-        );
+        const health =
+            Math.max(boss.health * scaling * bossHealthBoost, estimatePlayerDps() * minFightSeconds) *
+            (boss.hpMult || 1);
         enemies.push({
             ...boss,
             x: spawn.x,
@@ -2220,6 +2292,7 @@ function spawnEnemy(isBoss = false) {
             shootTimer: 1500,
             attackTimer: 3.5,
             attackState: null,
+            beams: [],
             visualAngle: 0,
             hitFlash: 0,
             spawnAnim: 0,
@@ -2238,7 +2311,9 @@ function spawnEnemy(isBoss = false) {
         if (hexPool.length > 0) pool = hexPool;
     }
     const type = pickWeightedEnemyType(pool, state.difficultyIndex);
-    const levelFactor = 1 + state.level * 0.03;
+    // Vie des ennemis : suit mieux la montée en puissance du joueur
+    // (avant ils mouraient à peine apparus en milieu de partie).
+    const levelFactor = 1.6 + state.level * 0.06;
     const healthScaling =
         levelFactor * (1 + elapsedTime * diff.enemyHealthGrowth) * sectorHealthMult();
     const speedScaling = (1 + elapsedTime * diff.enemySpeedGrowth) * sectorSpeedMult();
@@ -2397,7 +2472,8 @@ function createProjectile({
 
 function spawnEnemyProjectile(enemy, angle, options = {}) {
     const speed = options.speed || 210;
-    const damage = options.damage || 15;
+    // Les dégâts des boss sont déjà mis à l'échelle dans bossShot.
+    const damage = (options.damage || 15) * (enemy.isBoss || options.scaled ? 1 : sectorDamageMult());
     const radius = options.radius || 6;
     enemyProjectiles.push({
         x: enemy.x,
@@ -2407,7 +2483,10 @@ function spawnEnemyProjectile(enemy, angle, options = {}) {
         radius,
         damage,
         life: 0,
-        maxLife: 2.8,
+        maxLife: options.maxLife || 2.8,
+        homing: options.homing || 0, // rad/s vers le joueur
+        curve: options.curve || 0, // rad/s, trajectoire courbe
+        color: options.color || null,
     });
 }
 
@@ -2644,6 +2723,18 @@ function updateProjectiles(dt) {
 function updateEnemyProjectiles(dt) {
     for (let i = enemyProjectiles.length - 1; i >= 0; i -= 1) {
         const p = enemyProjectiles[i];
+        if (p.homing || p.curve) {
+            let heading = Math.atan2(p.vy, p.vx);
+            const speed = Math.hypot(p.vx, p.vy);
+            if (p.homing) {
+                const want = Math.atan2(player.y - p.y, player.x - p.x);
+                const diff = Math.atan2(Math.sin(want - heading), Math.cos(want - heading));
+                heading += Math.max(-p.homing * dt, Math.min(p.homing * dt, diff));
+            }
+            heading += p.curve * dt;
+            p.vx = Math.cos(heading) * speed;
+            p.vy = Math.sin(heading) * speed;
+        }
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.life += dt;
@@ -2705,7 +2796,7 @@ function updateDrones(dt) {
                     y: drone.y,
                     angle,
                     speed: getProjectileSpeed() * 0.9,
-                    damage: playerModifiers.droneDamage * (1 + perk("cannon") * 0.15),
+                    damage: playerModifiers.droneDamage * (1 + perk("cannon") * 0.12),
                     radius: 5,
                     life: 1.2,
                     homingStrength: 0.05,
@@ -2726,7 +2817,9 @@ function updateSpawning(dt) {
         if (interval <= 0) break;
         enemySpawnTimer -= interval;
         if (enemies.length < getMaxEnemies()) {
-            spawnEnemy();
+            // Par petits groupes dans les secteurs avancés
+            const pack = state.sectorPhase === "fight" ? 1 + Math.floor(state.sectorIndex / 3) : 1;
+            for (let k = 0; k < pack && enemies.length < getMaxEnemies(); k += 1) spawnEnemy();
         } else {
             enemySpawnTimer = 0;
             break;
@@ -2882,7 +2975,222 @@ function updateBoss(enemy, behavior, dx, dy, dist, dt) {
                 bossShot(enemy, leadAngle(enemy, 400), { speed: 400, damage: 13, radius: 7 });
             }
         }
+    } else if (behavior === "bossHydra") {
+        // Hydre : têtes qui crachent tour à tour des balles courbes.
+        const want = 260;
+        const sway = Math.sin(state.time * 1.7) * 0.6;
+        const moveDir = dist > want ? 1 : dist < want - 60 ? -1 : 0;
+        enemy.x += ((dx / dist) * moveDir - (dy / dist) * sway) * enemy.speed * dt;
+        enemy.y += ((dy / dist) * moveDir + (dx / dist) * sway) * enemy.speed * dt;
+        const heads = 2 + enemy.phase;
+        if (!enemy.droneSwarm) enemy.droneSwarm = [];
+        enemy.droneSwarm.length = Math.min(enemy.droneSwarm.length, heads);
+        while (enemy.droneSwarm.length < heads) enemy.droneSwarm.push({ angle: 0 });
+        enemy.droneSwarm.forEach((head, index) => {
+            head.angle = enemy.visualAngle + (index - (heads - 1) / 2) * 0.7 + Math.sin(state.time * 3 + index) * 0.15;
+        });
+        if (enemy.shootTimer <= 0) {
+            enemy.shootTimer = 380 / rage;
+            enemy.headIndex = ((enemy.headIndex || 0) + 1) % heads;
+            const head = enemy.droneSwarm[enemy.headIndex];
+            const from = { x: enemy.x + Math.cos(head.angle) * 70, y: enemy.y + Math.sin(head.angle) * 70 };
+            const a = Math.atan2(player.y - from.y, player.x - from.x);
+            bossShot(enemy, a - 0.35, { speed: 250, damage: 11, from, curve: 0.9, color: "#5dffa8" });
+            bossShot(enemy, a + 0.35, { speed: 250, damage: 11, from, curve: -0.9, color: "#5dffa8" });
+            if (enemy.phase >= 2) bossShot(enemy, a, { speed: 330, damage: 12, from });
+        }
+        if (enemy.phase >= 3 && enemy.attackTimer <= 0) {
+            enemy.attackTimer = 3;
+            enemy.droneSwarm.forEach((head) => {
+                const from = { x: enemy.x + Math.cos(head.angle) * 70, y: enemy.y + Math.sin(head.angle) * 70 };
+                for (let k = 0; k < 6; k += 1) {
+                    bossShot(enemy, (Math.PI / 3) * k + state.time, { speed: 190, damage: 10, from, curve: 0.5, color: "#5dffa8" });
+                }
+            });
+        }
+    } else if (behavior === "bossPrism") {
+        // Prisme : lasers annoncés par une ligne fine, qui tournent en phase 2+.
+        const cx = canvas.width / 2 + Math.cos(state.time * 0.4) * canvas.width * 0.18;
+        const cy = canvas.height / 2 + Math.sin(state.time * 0.55) * canvas.height * 0.15;
+        const tx = cx - enemy.x;
+        const ty = cy - enemy.y;
+        const td = Math.hypot(tx, ty) || 1;
+        enemy.x += (tx / td) * Math.min(td, enemy.speed * dt);
+        enemy.y += (ty / td) * Math.min(td, enemy.speed * dt);
+        if (enemy.beams.length === 0 && enemy.attackTimer <= 0) {
+            const aim = Math.atan2(dy, dx);
+            const count = enemy.phase === 1 ? 2 : enemy.phase === 2 ? 4 : 6;
+            const spin = enemy.phase === 1 ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.35 + enemy.phase * 0.1);
+            for (let k = 0; k < count; k += 1) {
+                const angle = enemy.phase === 1 ? aim + (k === 0 ? 0 : 0.5) : aim + ((Math.PI * 2) / count) * k + 0.25;
+                enemy.beams.push({ angle, spin, warn: 1.0, fire: 0.6 + enemy.phase * 0.4, width: 16 });
+            }
+            enemy.attackTimer = 3.6;
+            play("boss");
+        }
+        if (enemy.shootTimer <= 0) {
+            enemy.shootTimer = 1200 / rage;
+            const a = leadAngle(enemy, 320);
+            [-0.2, -0.07, 0.07, 0.2].forEach((o) => bossShot(enemy, a + o, { speed: 320, damage: 11, color: "#ffe45e" }));
+        }
+    } else if (behavior === "bossQueen") {
+        // Reine Essaim : reste à distance, pond des frelons et tire des orbes à tête chercheuse.
+        const want = 360;
+        const moveDir = dist > want ? 1 : dist < want - 80 ? -1 : 0;
+        enemy.orbit = (enemy.orbit || 0) + dt * 0.8;
+        enemy.x += ((dx / dist) * moveDir + Math.cos(enemy.orbit) * 0.5) * enemy.speed * dt;
+        enemy.y += ((dy / dist) * moveDir + Math.sin(enemy.orbit) * 0.5) * enemy.speed * dt;
+        if (enemy.attackTimer <= 0) {
+            enemy.attackTimer = 3.4;
+            const swarm = enemies.filter((e) => e.isMinion).length;
+            const brood = Math.min(1 + enemy.phase, 10 - swarm);
+            for (let k = 0; k < brood; k += 1) spawnMinion(enemy, "hornet");
+        }
+        if (enemy.shootTimer <= 0) {
+            enemy.shootTimer = 1500 / rage;
+            const a = Math.atan2(dy, dx);
+            const orbs = 1 + enemy.phase;
+            for (let k = 0; k < orbs; k += 1) {
+                bossShot(enemy, a + (k - (orbs - 1) / 2) * 0.6, {
+                    speed: 150, damage: 13, radius: 8, homing: 1.4, maxLife: 4.2, color: "#ff2bd6",
+                });
+            }
+            if (enemy.phase >= 3) bossRing(enemy, 14, Math.random() * Math.PI, { speed: 200, damage: 10 });
+        }
+    } else if (behavior === "bossBastion") {
+        // Bastion : bouclier frontal (il faut le contourner), anneaux à trou.
+        enemy.x += (dx / dist) * enemy.speed * 0.6 * dt;
+        enemy.y += (dy / dist) * enemy.speed * 0.6 * dt;
+        // Le bouclier surchauffe régulièrement : fenêtre pour frapper de face.
+        enemy.shieldCycle = (enemy.shieldCycle || 0) + dt;
+        const cycle = 7 - enemy.phase * 0.5;
+        const downTime = 2.4 - enemy.phase * 0.3;
+        const shieldDown = enemy.shieldCycle % cycle > cycle - downTime;
+        if (shieldDown && !enemy.wasDown) floatText(enemy.x, enemy.y - enemy.size - 20, "BOUCLIER HS", "#ffffff", 10);
+        enemy.wasDown = shieldDown;
+        enemy.shieldArc = shieldDown ? 0 : 2.3 + enemy.phase * 0.15;
+        const toPlayer = Math.atan2(dy, dx);
+        if (enemy.shieldAngle === undefined) enemy.shieldAngle = toPlayer;
+        const diff = Math.atan2(Math.sin(toPlayer - enemy.shieldAngle), Math.cos(toPlayer - enemy.shieldAngle));
+        // Plus lent qu'un joueur qui tourne autour : on peut le contourner.
+        const turn = (0.4 + enemy.phase * 0.1) * dt;
+        enemy.shieldAngle += Math.max(-turn, Math.min(turn, diff));
+        if (enemy.shootTimer <= 0) {
+            enemy.shootTimer = 2300 / rage;
+            const count = 22 + enemy.density * 2;
+            const gapCenter = toPlayer + (Math.random() - 0.5) * 1.2;
+            const gapHalf = 0.42;
+            for (let k = 0; k < count; k += 1) {
+                const a = (Math.PI * 2 * k) / count;
+                const off = Math.atan2(Math.sin(a - gapCenter), Math.cos(a - gapCenter));
+                if (Math.abs(off) < gapHalf) continue;
+                bossShot(enemy, a, { speed: 170, damage: 13, radius: 7, color: "#7d9bff" });
+            }
+        }
+        if (enemy.attackTimer <= 0) {
+            enemy.attackTimer = 1.8;
+            bossShot(enemy, leadAngle(enemy, 280), { speed: 280, damage: 22, radius: 13, color: "#7d9bff" });
+        }
+    } else if (behavior === "bossOmega") {
+        // Oméga : boss final, cumule anneaux, lasers puis gravité.
+        enemy.x += (dx / dist) * enemy.speed * 0.4 * dt;
+        enemy.y += (dy / dist) * enemy.speed * 0.4 * dt;
+        enemy.spin = (enemy.spin || 0) + dt * 1.4;
+        if (enemy.shootTimer <= 0) {
+            enemy.shootTimer = 1700 / rage;
+            bossRing(enemy, 14 + enemy.density, enemy.spin, { speed: 200, damage: 13, radius: 7 });
+            const a = leadAngle(enemy, 360);
+            [-0.1, 0, 0.1].forEach((o) => bossShot(enemy, a + o, { speed: 360, damage: 14 }));
+        }
+        if (enemy.phase >= 2 && enemy.beams.length === 0 && enemy.attackTimer <= 0) {
+            const base = Math.atan2(dy, dx) + Math.PI / 3;
+            for (let k = 0; k < 3; k += 1) {
+                enemy.beams.push({ angle: base + ((Math.PI * 2) / 3) * k, spin: 0.45, warn: 1.1, fire: 2.2, width: 18 });
+            }
+            enemy.attackTimer = 5;
+        }
+        if (enemy.phase >= 3) {
+            // Attraction : on est aspiré vers le cœur
+            enemy.gravity = 95;
+            player.x -= (dx / dist) * enemy.gravity * dt;
+            player.y -= (dy / dist) * enemy.gravity * dt;
+            enemy.orbTimer = (enemy.orbTimer || 0) - dt;
+            if (enemy.orbTimer <= 0) {
+                enemy.orbTimer = 2.2;
+                for (let k = 0; k < 3; k += 1) {
+                    bossShot(enemy, enemy.spin + ((Math.PI * 2) / 3) * k, {
+                        speed: 160, damage: 12, radius: 8, homing: 1.2, maxLife: 4, color: "#ff2bd6",
+                    });
+                }
+            }
+        }
     }
+    updateBeams(enemy, dt);
+}
+
+// Lasers : avertissement (ligne fine) puis rayon qui brûle tant qu'on est dedans.
+function updateBeams(enemy, dt) {
+    if (!enemy.beams || enemy.beams.length === 0) return;
+    for (let i = enemy.beams.length - 1; i >= 0; i -= 1) {
+        const beam = enemy.beams[i];
+        if (beam.warn > 0) {
+            beam.warn -= dt;
+            continue;
+        }
+        beam.fire -= dt;
+        beam.angle += beam.spin * dt;
+        if (beam.fire <= 0) {
+            enemy.beams.splice(i, 1);
+            continue;
+        }
+        const px = player.x - enemy.x;
+        const py = player.y - enemy.y;
+        const along = px * Math.cos(beam.angle) + py * Math.sin(beam.angle);
+        const perp = Math.abs(-px * Math.sin(beam.angle) + py * Math.cos(beam.angle));
+        if (along > 0 && perp < beam.width + player.radius * 0.7) {
+            applyPlayerDamage(60 * enemy.bulletDamage * dt, { feedback: false });
+            if (Math.random() < dt * 8) {
+                burst(player.x, player.y, enemy.color, 4, 160, 2);
+                shake(2);
+            }
+        }
+    }
+}
+
+// Bouclier du Bastion : bloque les tirs qui arrivent de face.
+function bastionBlocks(enemy, p) {
+    const a = Math.atan2(p.y - enemy.y, p.x - enemy.x);
+    const diff = Math.atan2(Math.sin(a - enemy.shieldAngle), Math.cos(a - enemy.shieldAngle));
+    if (Math.abs(diff) > enemy.shieldArc / 2) return false;
+    burst(p.x, p.y, enemy.color, 3, 140, 2);
+    // En fureur, le bouclier renvoie une partie des tirs.
+    if (enemy.phase >= 3 && Math.random() < 0.25 && enemyProjectiles.length < 160) {
+        bossShot(enemy, Math.atan2(player.y - p.y, player.x - p.x), { from: p, speed: 260, damage: 9, color: "#7d9bff" });
+    }
+    return true;
+}
+
+const minionTemplates = {
+    hornet: { name: "Frelon", shape: "triangle", color: "#ff78c9", size: 13, health: 18, xp: 4, speed: 230, behavior: "rusher" },
+};
+
+function spawnMinion(parent, key) {
+    const t = minionTemplates[key];
+    const angle = Math.random() * Math.PI * 2;
+    const health = t.health * getDifficultyConfig().enemyHealthMultiplier * sectorHealthMult() * (1 + state.level * 0.03);
+    enemies.push({
+        ...t,
+        x: parent.x + Math.cos(angle) * parent.size,
+        y: parent.y + Math.sin(angle) * parent.size,
+        health,
+        currentHealth: health,
+        speed: t.speed * sectorSpeedMult(),
+        isMinion: true,
+        shootTimer: 0,
+        visualAngle: 0,
+        hitFlash: 0,
+        spawnAnim: 0,
+    });
 }
 
 function updateEnemies(dt) {
@@ -2960,7 +3268,7 @@ function updateEnemies(dt) {
                     spawnEnemyProjectile(enemy, a, { speed: 280, damage: 9 });
                 }
             }
-        } else if (behavior === "bossTank" || behavior === "bossDrone" || behavior === "bossSpiral") {
+        } else if (behavior.startsWith("boss")) {
             updateBoss(enemy, behavior, dx, dy, dist, dt);
         } else {
             const chaseStep = Math.min(dist, (enemy.speed || 60) * dt);
@@ -3004,7 +3312,9 @@ function updateEnemies(dt) {
             enemy.y -= ny * overlap * 0.3;
             player.x += nx * overlap * 0.1;
             player.y += ny * overlap * 0.1;
-            const contactDamage = enemy.isBoss ? 30 + state.sectorIndex * 3 : behavior === "rusher" ? 14 : 8;
+            const contactDamage = enemy.isBoss
+                ? 30 + state.sectorIndex * 3
+                : (behavior === "rusher" ? 14 : 8) * sectorDamageMult();
             applyPlayerDamage(contactDamage * dt, { feedback: false });
             if (state.invulnerable <= 0) {
                 play("hurt", 350);
@@ -3017,6 +3327,10 @@ function updateEnemies(dt) {
             const p = projectiles[j];
             if (p.hit.has(enemy)) continue;
             const distToProjectile = Math.hypot(p.x - enemy.x, p.y - enemy.y);
+            if (enemy.shieldArc && distToProjectile < enemy.size + 30 + p.radius && bastionBlocks(enemy, p)) {
+                projectiles.splice(j, 1);
+                continue;
+            }
             if (distToProjectile < enemy.size + p.radius) {
                 // Chaque projectile ne touche une même cible qu'une fois
                 // (avant : la perforation re-touchait l'ennemi à chaque image).
@@ -3351,7 +3665,7 @@ function drawEnemyProjectiles() {
     ctx.globalCompositeOperation = "lighter";
     enemyProjectiles.forEach((p) => {
         ctx.globalAlpha = 0.35;
-        ctx.fillStyle = "#ff3b6b";
+        ctx.fillStyle = p.color || "#ff3b6b";
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius * 2.1, 0, Math.PI * 2);
         ctx.fill();
@@ -3427,6 +3741,9 @@ function drawBossTelegraphs(enemy) {
         ctx.lineTo(Math.cos(atk.angle) * 520, Math.sin(atk.angle) * 520);
         ctx.stroke();
     }
+    ctx.restore();
+    drawBossSpecials(enemy);
+    ctx.save();
     if (atk && atk.type === "blink") {
         ctx.strokeStyle = enemy.color;
         ctx.shadowColor = enemy.color;
@@ -3439,6 +3756,67 @@ function drawBossTelegraphs(enemy) {
         ctx.stroke();
     }
     ctx.restore();
+}
+
+// Lasers, bouclier et puits de gravité (repère centré sur le boss).
+function drawBossSpecials(enemy) {
+    (enemy.beams || []).forEach((beam) => {
+        const len = Math.hypot(canvas.width, canvas.height);
+        const ex = Math.cos(beam.angle) * len;
+        const ey = Math.sin(beam.angle) * len;
+        ctx.save();
+        ctx.strokeStyle = enemy.color;
+        ctx.shadowColor = enemy.color;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(ex, ey);
+        if (beam.warn > 0) {
+            ctx.globalAlpha = 0.35 + 0.35 * Math.sin(state.time * 30);
+            ctx.lineWidth = 2;
+            ctx.setLineDash([14, 10]);
+            ctx.shadowBlur = 10;
+            ctx.stroke();
+        } else {
+            ctx.globalCompositeOperation = "lighter";
+            ctx.shadowBlur = 30;
+            ctx.globalAlpha = 0.55;
+            ctx.lineWidth = beam.width * 2;
+            ctx.stroke();
+            ctx.globalAlpha = 0.95;
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = beam.width * 0.6;
+            ctx.stroke();
+        }
+        ctx.restore();
+    });
+    if (enemy.shieldArc && enemy.shieldAngle !== undefined) {
+        ctx.save();
+        ctx.strokeStyle = enemy.color;
+        ctx.shadowColor = enemy.color;
+        ctx.shadowBlur = 22;
+        ctx.lineWidth = 7;
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(0, 0, enemy.size + 22, enemy.shieldAngle - enemy.shieldArc / 2, enemy.shieldAngle + enemy.shieldArc / 2);
+        ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+        ctx.restore();
+    }
+    if (enemy.gravity) {
+        ctx.save();
+        ctx.strokeStyle = enemy.color;
+        ctx.lineWidth = 2;
+        for (let k = 0; k < 3; k += 1) {
+            const t = (state.time * 0.6 + k / 3) % 1;
+            ctx.globalAlpha = 0.08 + 0.3 * t;
+            ctx.beginPath();
+            ctx.arc(0, 0, enemy.size + (1 - t) * 260, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
 }
 
 function drawEnemies() {
