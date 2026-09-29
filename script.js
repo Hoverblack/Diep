@@ -37,6 +37,7 @@ const gameOverOverlay = $("gameOverOverlay");
 const controlsOverlay = $("controlsOverlay");
 const startGameButton = $("startGameButton");
 const challengeButton = $("challengeButton");
+const nemesisButton = $("nemesisButton");
 const continueButton = $("continueButton");
 const continueLabel = $("continueLabel");
 const restartButton = $("restartButton");
@@ -565,9 +566,12 @@ const sectors = [
     { name: "Soleil Noir", goal: 48, hue: "#ff3b6b", accent: "#ffe45e" },
     // Arène secrète : aucun ennemi, seulement le Prisme Noir.
     { name: "Arène Prismatique", goal: 1, hue: "#ffffff", accent: "#ff2bd6", arena: true, boss: "blackprism" },
+    // Seconde arène : ton reflet, Némésis.
+    { name: "Salle des Miroirs", goal: 1, hue: "#ff3b6b", accent: "#2de2ff", arena: true, boss: "nemesis" },
 ];
 
 const ARENA_SECTOR = 8;
+const NEMESIS_SECTOR = 9;
 
 function getSector(index = state.sectorIndex) {
     if (index < sectors.length) return { ...sectors[index], infinite: false };
@@ -1085,6 +1089,21 @@ const bossConfigs = [
         arenaOnly: true,
         beamFactor: 0.65, // beaucoup de lasers : chacun brûle un peu moins
     },
+    {
+        id: "nemesis",
+        name: "Némésis",
+        shape: "tank",
+        color: "#ff3b6b",
+        size: 46,
+        health: 1500,
+        xp: 900,
+        speed: 230,
+        behavior: "bossNemesis",
+        hpMult: 0.8, // il esquive et se protège : moins de vie
+        rainbow: true, // son Laser prisme est arc-en-ciel, comme le tien
+        arenaOnly: true,
+        beamFactor: 0.6,
+    },
 ];
 
 function pickBossConfig() {
@@ -1353,7 +1372,8 @@ trackpadModeToggle.addEventListener("change", (event) => {
 startGameButton.addEventListener("click", () => startNewGame());
 continueButton.addEventListener("click", () => continueFromSave());
 restartButton.addEventListener("click", () => (state.challenge ? startChallenge() : startNewGame()));
-challengeButton.addEventListener("click", () => startChallenge());
+challengeButton.addEventListener("click", () => startChallenge(ARENA_SECTOR));
+nemesisButton.addEventListener("click", () => startChallenge(NEMESIS_SECTOR));
 resumeSaveButton.addEventListener("click", () => continueFromSave());
 returnMenuButton.addEventListener("click", () => returnToMenu());
 showControlsButton.addEventListener("click", () => showOverlay(controlsOverlay));
@@ -1566,6 +1586,7 @@ function resetRunState() {
     }
     elapsedTime = 0;
     state.shieldHp = 0;
+    state.playerSlow = 0;
     player.novaTimer = 6;
     player.beamOn = false;
     overseerMineTimer = 0;
@@ -1599,17 +1620,20 @@ function enterPlaying() {
     updateDifficultyLockState();
 }
 
-// Défi : directement l'arène du Prisme Noir avec un tank de niveau 20.
-function startChallenge() {
+// Défis : directement une arène, avec un tank de niveau 20 (Prisme Noir)
+// ou 30 (Némésis, pour profiter des classes des niveaux 25 et 30).
+function startChallenge(sectorIndex = state.challengeSector ?? ARENA_SECTOR) {
     setDifficulty(Number(menuDifficultyRange.value));
     state.trackpadMode = trackpadModeToggle.checked;
     resetRunState();
     state.challenge = true;
-    state.level = 20;
-    state.upgradePoints = 20;
+    state.challengeSector = sectorIndex;
+    const level = sectorIndex === NEMESIS_SECTOR ? 30 : 20;
+    state.level = level;
+    state.upgradePoints = level;
     recalcPlayerStats({ refillHealth: true }); // bonus de rang du tank
     enterPlaying();
-    beginSector(ARENA_SECTOR, { save: false });
+    beginSector(sectorIndex, { save: false });
     refreshUpgradePanel();
     checkClassMilestones();
 }
@@ -1668,6 +1692,7 @@ function beginSector(index, { save = true } = {}) {
     enemyProjectiles.length = 0;
     mines.length = 0;
     arenaBackground = null;
+    state.playerSlow = 0;
     if (getSector().arena) {
         player.x = canvas.width / 2;
         player.y = canvas.height * 0.78;
@@ -1993,11 +2018,12 @@ function getFireRateBonus() {
 
 function getFireCooldown() {
     const buff = isBuffActive("fireRate") ? 1.4 : 1;
+    const slowed = state.playerSlow > 0 ? 1.35 : 1; // orbe de Ralenti de Némésis
     return Math.max(
         MIN_FIRE_COOLDOWN,
         (player.baseFireCooldown * playerModifiers.fireRateMultiplier) /
             (getFireRateBonus() * buff)
-    );
+    ) * slowed;
 }
 
 function getRawShotCount() {
@@ -2054,6 +2080,7 @@ function getProjectileSpeed() {
 function getSpeedMultiplier() {
     let mult = 1;
     if (isBuffActive("speed")) mult *= 1.3;
+    if (state.playerSlow > 0) mult *= 0.55;
     return mult;
 }
 
@@ -2185,11 +2212,11 @@ function isBuffActive(key) {
 // Bonus
 // ---------------------------------------------------------------------------
 
-function spawnPickup(x = null, y = null) {
+function spawnPickup(x = null, y = null, forcedType = null) {
     const available = lootTypes.filter(
         (t) => (!t.minLevel || state.level >= t.minLevel) && (!t.rare || Math.random() < 0.35)
     );
-    const type = available[Math.floor(Math.random() * available.length)];
+    const type = forcedType || available[Math.floor(Math.random() * available.length)];
     const margin = 80;
     pickups.push({
         x: x ?? margin + Math.random() * (canvas.width - margin * 2),
@@ -2625,9 +2652,17 @@ function updateBossPhase(enemy) {
             enemy.beams.push({ angle: (Math.PI / 8) * k + enemy.phase * 0.2, spin: 0, warn: 0.7, fire: 0.35, width: 12, hue: k * 22, loud: k === 0 });
         }
     }
+    if (enemy.behavior === "bossNemesis") {
+        // Il appelle ses reflets (et remplace ceux que tu as détruits)
+        enemy.bubbleHp = 0;
+        spawnMirrorClones(enemy);
+    }
     for (let k = 0; k < minions && enemies.length < getMaxEnemies() + 4; k += 1) spawnEnemy();
     ring(enemy.x, enemy.y, "#ff3b6b", enemy.size * 5, 0.7, 5);
-    floatText(enemy.x, enemy.y - enemy.size - 24, enemy.phase === 3 ? "FUREUR !" : "ENRAGÉ !", "#ff3b6b", 14);
+    const rageText = enemy.behavior === "bossNemesis"
+        ? (enemy.phase === 3 ? "SURCHARGE !" : "MIROIRS !")
+        : (enemy.phase === 3 ? "FUREUR !" : "ENRAGÉ !");
+    floatText(enemy.x, enemy.y - enemy.size - 24, rageText, "#ff3b6b", 14);
     shake(16);
     flash("255,59,107", 0.35);
     play("boss");
@@ -2731,6 +2766,12 @@ function damageEnemy(enemy, amount, knockback = null) {
     if (enemy.dead) return;
     if (enemy.phaseShield > 0) {
         enemy.hitFlash = 0.03;
+        return;
+    }
+    if (enemy.bubbleHp > 0) {
+        enemy.bubbleHp -= amount;
+        enemy.hitFlash = 0.03;
+        if (enemy.bubbleHp <= 0) breakNemesisShield(enemy);
         return;
     }
     enemy.currentHealth -= amount;
@@ -2871,6 +2912,7 @@ function spawnEnemyProjectile(enemy, angle, options = {}) {
         life: 0,
         maxLife: options.maxLife || 2.8,
         homing: options.homing || 0, // rad/s vers le joueur
+        slow: options.slow || 0, // secondes de ralenti si elle te touche
         curve: options.curve || 0, // rad/s, trajectoire courbe
         color: options.color || null,
     });
@@ -3138,6 +3180,10 @@ function updateEnemyProjectiles(dt) {
         const dist = Math.hypot(p.x - player.x, p.y - player.y);
         if (dist < player.radius + p.radius && state.invulnerable <= 0) {
             applyPlayerDamage(p.damage);
+            if (p.slow) {
+                if (!(state.playerSlow > 0)) floatText(player.x, player.y - 40, "RALENTI !", "#9b5cff", 10);
+                state.playerSlow = Math.max(state.playerSlow || 0, p.slow);
+            }
             burst(p.x, p.y, "#ff3b6b", 10, 180, 2);
             enemyProjectiles.splice(i, 1);
         }
@@ -3520,6 +3566,8 @@ function updateBoss(enemy, behavior, dx, dy, dist, dt) {
         }
     } else if (behavior === "bossBlackPrism") {
         updateBlackPrism(enemy, dx, dy, dt, rage);
+    } else if (behavior === "bossNemesis") {
+        updateNemesis(enemy, dx, dy, dist, dt, rage);
     }
     updateBeams(enemy, dt);
 }
@@ -3629,6 +3677,577 @@ function updateBlackPrism(enemy, dx, dy, dt, rage) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Némésis : ton reflet. Il bouge et tire comme un tank, esquive tes tirs et
+// retourne tes power-ups contre toi (Laser prisme, Nova, Bouclier, Ralenti,
+// Essaim). À 66 % il appelle ses reflets, à 33 % il passe en Surcharge.
+// ---------------------------------------------------------------------------
+
+function turnToward(angle, target, maxStep) {
+    const diff = Math.atan2(Math.sin(target - angle), Math.cos(target - angle));
+    return angle + Math.max(-maxStep, Math.min(maxStep, diff));
+}
+
+function announce(enemy, text, color) {
+    floatText(enemy.x, enemy.y - enemy.size - 30, text, color, 12);
+    ring(enemy.x, enemy.y, color, enemy.size * 2.6, 0.45, 3);
+}
+
+function nemesisMuzzle(enemy) {
+    return {
+        x: enemy.x + Math.cos(enemy.aim) * enemy.size * 1.3,
+        y: enemy.y + Math.sin(enemy.aim) * enemy.size * 1.3,
+    };
+}
+
+function updateNemesis(enemy, dx, dy, dist, dt, rage) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const delta = enemy.beamDelta || 0;
+
+    // Traînée d'images fantômes
+    enemy.trailTimer = (enemy.trailTimer || 0) - dt;
+    if (enemy.trailTimer <= 0) {
+        enemy.trailTimer = 0.05;
+        enemy.trail = [...(enemy.trail || []).slice(-5), { x: enemy.x, y: enemy.y }];
+    }
+
+    // Le canon suit le joueur, avec un peu d'anticipation
+    const want = leadAngle(enemy, 420);
+    enemy.aim = turnToward(enemy.aim ?? want, want, (2.2 + enemy.phase * 0.5) * dt);
+    enemy.recoil = Math.max(0, (enemy.recoil || 0) - dt * 6);
+
+    // Essaim : ses drones tournent et tirent
+    if (enemy.swarmTime > 0) {
+        enemy.swarmTime -= dt;
+        enemy.droneSwarm.forEach((drone) => {
+            drone.angle += dt * 1.6;
+            drone.cd -= dt * rage;
+            if (drone.cd <= 0) {
+                drone.cd = 1.5;
+                const from = { x: enemy.x + Math.cos(drone.angle) * 70, y: enemy.y + Math.sin(drone.angle) * 70 };
+                bossShot(enemy, Math.atan2(player.y - from.y, player.x - from.x), { from, speed: 300, damage: 7, radius: 5, color: "#ffb35e" });
+            }
+        });
+        if (enemy.swarmTime <= 0) enemy.droneSwarm = [];
+    }
+
+    // Bouclier : disparaît au bout d'un moment
+    if (enemy.bubbleHp > 0) {
+        enemy.bubbleTime -= dt;
+        if (enemy.bubbleTime <= 0) enemy.bubbleHp = 0;
+    }
+
+    // Sonné après avoir perdu son bouclier : il ne fait plus rien
+    if (enemy.stun > 0) {
+        enemy.stun -= dt;
+        enemy.attackState = null;
+        return;
+    }
+
+    const atk = enemy.attackState;
+    const beaming = enemy.beams.length > 0;
+    const charging = atk && atk.type === "nova";
+
+    // Déplacement : duel à distance en tournant autour du joueur
+    enemy.strafeTimer = (enemy.strafeTimer ?? 2.5) - dt;
+    if (enemy.strafeTimer <= 0) {
+        enemy.strafeTimer = 1.8 + Math.random() * 2;
+        enemy.strafe = -(enemy.strafe || 1);
+    }
+    const desired = 300;
+    const radial = dist > desired + 40 ? 1 : dist < desired - 60 ? -1 : 0;
+    const strafe = enemy.strafe || 1;
+    let mx = (dx / dist) * radial - (dy / dist) * strafe * 0.8;
+    let my = (dy / dist) * radial + (dx / dist) * strafe * 0.8;
+    const margin = 100;
+    if (enemy.x < margin) mx += 1;
+    if (enemy.x > w - margin) mx -= 1;
+    if (enemy.y < margin) my += 1;
+    if (enemy.y > h - margin) my -= 1;
+    const ml = Math.hypot(mx, my) || 1;
+    const speed = enemy.speed * (beaming ? 0.35 : charging ? 0.15 : 1);
+    enemy.x += (mx / ml) * speed * dt;
+    enemy.y += (my / ml) * speed * dt;
+
+    // Esquive : un pas de côté quand un tir arrive droit sur lui
+    enemy.dodgeCd = (enemy.dodgeCd ?? 1) - dt;
+    if (enemy.dash) {
+        enemy.x += enemy.dash.vx * dt;
+        enemy.y += enemy.dash.vy * dt;
+        enemy.dash.t -= dt;
+        if (Math.random() < 0.5) burst(enemy.x, enemy.y, "#2de2ff", 2, 80, 2);
+        if (enemy.dash.t <= 0) enemy.dash = null;
+    } else if (enemy.dodgeCd <= 0 && !beaming && !charging) {
+        const threat = projectiles.find((p) => {
+            const px = enemy.x - p.x;
+            const py = enemy.y - p.y;
+            const d = Math.hypot(px, py);
+            const sp = Math.hypot(p.vx, p.vy) || 1;
+            return d < 220 && d > enemy.size && (p.vx * px + p.vy * py) / (d * sp) > 0.93;
+        });
+        if (threat) {
+            const sp = Math.hypot(threat.vx, threat.vy) || 1;
+            let sx = -threat.vy / sp;
+            let sy = threat.vx / sp;
+            if (sx * (w / 2 - enemy.x) + sy * (h / 2 - enemy.y) < 0) {
+                sx = -sx;
+                sy = -sy;
+            }
+            enemy.dash = { vx: sx * 560, vy: sy * 560, t: 0.22 };
+            enemy.dodgeCd = 2.8 / Math.max(0.6, enemy.rateMult || 1);
+        }
+    }
+
+    // Nova : se charge, puis souffle tout autour
+    if (charging) {
+        atk.t -= dt;
+        if (atk.t <= 0) {
+            enemy.attackState = null;
+            for (let i = projectiles.length - 1; i >= 0; i -= 1) {
+                const p = projectiles[i];
+                if (Math.hypot(p.x - enemy.x, p.y - enemy.y) < atk.r) projectiles.splice(i, 1);
+            }
+            bossRing(enemy, 14 + enemy.phase * 4 + Math.max(0, delta) * 2, Math.random() * Math.PI, {
+                speed: 220, damage: 10, radius: 7, color: "#ffffff",
+            });
+            if (dist < atk.r + player.radius) {
+                applyPlayerDamage(22 * enemy.bulletDamage);
+                player.vx += (dx / dist) * 700;
+                player.vy += (dy / dist) * 700;
+            }
+            ring(enemy.x, enemy.y, "#ffffff", atk.r, 0.45, 6);
+            burst(enemy.x, enemy.y, "#ffffff", 40, atk.r * 1.4, 3);
+            shake(12);
+            flash("255,255,255", 0.3);
+            play("bossKill");
+        }
+        return;
+    }
+
+    // Canon principal : salves de tank (plus un tir en étoile en Surcharge)
+    if (!beaming && enemy.shootTimer <= 0) {
+        enemy.shootTimer = (enemy.phase >= 3 ? 640 : 780) / rage;
+        const count = enemy.phase === 1 ? 3 : 5;
+        const from = nemesisMuzzle(enemy);
+        for (let k = 0; k < count; k += 1) {
+            bossShot(enemy, enemy.aim + (k - (count - 1) / 2) * 0.13, { from, speed: 400, damage: 9, color: "#ff3b6b" });
+        }
+        if (enemy.phase >= 3) {
+            enemy.octo = !enemy.octo;
+            if (enemy.octo) bossRing(enemy, 8, state.time * 0.6, { speed: 240, damage: 9, color: "#ff2bd6" });
+        }
+        enemy.recoil = 1;
+    }
+
+    // Pouvoirs volés, à tour de rôle
+    if (beaming || atk || enemy.attackTimer > 0) return;
+    const moves = enemy.phase === 1 ? ["laser", "nova", "shield"] : ["laser", "chrono", "nova", "swarm", "shield"];
+    enemy.move = ((enemy.move ?? -1) + 1) % moves.length;
+    const kind = moves[enemy.move];
+    enemy.attackTimer = 3.4 - enemy.phase * 0.3;
+
+    if (kind === "laser") {
+        announce(enemy, "LASER PRISME", "#ffe45e");
+        // Toujours un peu moins vite que toi : en tournant autour, tu t'en sors.
+        const track = (0.45 + enemy.phase * 0.1) * Math.min(1, enemy.rateMult || 1);
+        const twin = enemy.phase >= 3 ? delta >= 0 : delta >= 2 && enemy.phase >= 2;
+        const offsets = twin ? [0, -0.5, 0.5] : [0];
+        offsets.forEach((offset, k) => {
+            enemy.beams.push({
+                angle: enemy.aim + offset,
+                offset,
+                track,
+                spin: 0,
+                warn: 1.0,
+                fire: 2.1 + enemy.phase * 0.3,
+                width: k === 0 ? 16 : 10,
+                hue: k * 120,
+                loud: k === 0,
+            });
+        });
+    } else if (kind === "nova") {
+        announce(enemy, "NOVA", "#ffffff");
+        const t = Math.max(0.7, 1.15 + (enemy.warnBonus || 0) * 0.5);
+        enemy.attackState = { type: "nova", t, max: t, r: 270 };
+    } else if (kind === "shield") {
+        announce(enemy, "BOUCLIER", "#8ef0ff");
+        enemy.bubbleMax = enemy.health * (0.015 + enemy.phase * 0.005);
+        enemy.bubbleHp = enemy.bubbleMax;
+        enemy.bubbleTime = 6;
+    } else if (kind === "chrono") {
+        announce(enemy, "RALENTI", "#9b5cff");
+        const orbs = Math.max(2, 3 + Math.min(1, delta));
+        for (let k = 0; k < orbs; k += 1) {
+            bossShot(enemy, enemy.aim + (k - (orbs - 1) / 2) * 0.55, {
+                speed: 170, damage: 8, radius: 12, homing: 0.9, maxLife: 5, color: "#9b5cff", slow: 2.5,
+            });
+        }
+    } else if (kind === "swarm") {
+        announce(enemy, "ESSAIM", "#ffb35e");
+        const n = 3 + Math.max(0, delta);
+        enemy.droneSwarm = Array.from({ length: n }, (_, k) => ({ angle: (Math.PI * 2 * k) / n, cd: 0.8 + k * 0.25 }));
+        enemy.swarmTime = 7;
+    }
+}
+
+// Quand son bouclier casse : sonné, et il lâche un de tes power-ups.
+function breakNemesisShield(enemy) {
+    enemy.bubbleHp = 0;
+    enemy.stun = 1.6;
+    enemy.beams.length = 0;
+    floatText(enemy.x, enemy.y - enemy.size - 30, "BOUCLIER BRISÉ !", "#8ef0ff", 12);
+    ring(enemy.x, enemy.y, "#8ef0ff", enemy.size * 3, 0.5, 5);
+    burst(enemy.x, enemy.y, "#8ef0ff", 30, 320, 3);
+    shake(8);
+    const drops = lootTypes.filter((t) => t.special);
+    const type = drops[Math.floor(Math.random() * drops.length)];
+    const a = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+    spawnPickup(enemy.x + Math.cos(a) * (enemy.size + 40), enemy.y + Math.sin(a) * (enemy.size + 40), type);
+}
+
+// Reflets : ils se placent en miroir de toi (gauche/droite, haut/bas).
+function spawnMirrorClones(boss) {
+    const delta = boss.beamDelta || 0;
+    const kinds = delta < 0 ? ["x"] : delta >= 2 ? ["x", "y", "xy"] : ["x", "y"];
+    kinds.forEach((mirror, k) => {
+        if (enemies.some((e) => e.clone && e.mirror === mirror)) return;
+        const health = boss.health * 0.035;
+        enemies.push({
+            name: "Reflet",
+            shape: "tank",
+            clone: true,
+            mirror,
+            parent: boss,
+            color: "#ff78c9",
+            size: 22,
+            health,
+            currentHealth: health,
+            xp: 60,
+            speed: 280,
+            behavior: "mirrorClone",
+            x: boss.x,
+            y: boss.y,
+            aim: 0,
+            shootTimer: 1400 + k * 500,
+            beams: [],
+            spawnAnim: 0,
+            hitFlash: 0,
+        });
+        ring(boss.x, boss.y, "#ff78c9", 120, 0.5, 3);
+    });
+}
+
+function updateMirrorClone(enemy, dt) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const tx = enemy.mirror === "y" ? player.x : w - player.x;
+    const ty = enemy.mirror === "x" ? player.y : h - player.y;
+    const mx = tx - enemy.x;
+    const my = ty - enemy.y;
+    const md = Math.hypot(mx, my) || 1;
+    enemy.x += (mx / md) * Math.min(md, enemy.speed * dt);
+    enemy.y += (my / md) * Math.min(md, enemy.speed * dt);
+    enemy.aim = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+    enemy.trailTimer = (enemy.trailTimer || 0) - dt;
+    if (enemy.trailTimer <= 0) {
+        enemy.trailTimer = 0.06;
+        enemy.trail = [...(enemy.trail || []).slice(-3), { x: enemy.x, y: enemy.y }];
+    }
+    const boss = enemy.parent;
+    if (enemy.shootTimer <= 0 && boss && !boss.dead) {
+        enemy.shootTimer = 1700 / bossRage(boss);
+        const from = { x: enemy.x + Math.cos(enemy.aim) * 30, y: enemy.y + Math.sin(enemy.aim) * 30 };
+        [-0.08, 0.08].forEach((o) => bossShot(boss, enemy.aim + o, { from, speed: 330, damage: 8, color: "#ff78c9" }));
+    }
+}
+
+// Un tank comme le tien, aux couleurs inversées (repère centré sur lui).
+function drawMirrorTank(enemy, size, flashing, alpha) {
+    const aim = enemy.aim ?? 0;
+    const body = flashing ? "#ffffff" : enemy.color;
+    const cannonColor = enemy.clone ? "#ff2bd6" : "#2de2ff";
+    const scale = size / enemy.size;
+    const cannons = enemy.clone ? 1 : enemy.phase === 1 ? 3 : 5;
+
+    // Images fantômes
+    (enemy.trail || []).forEach((t, k, arr) => {
+        ctx.save();
+        ctx.globalAlpha = 0.05 + (0.12 * k) / arr.length;
+        ctx.strokeStyle = k % 2 ? "#2de2ff" : enemy.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(t.x - enemy.x, t.y - enemy.y, size, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    });
+
+    ctx.save();
+    ctx.globalAlpha = alpha * (enemy.stun > 0 && Math.sin(state.time * 40) > 0 ? 0.5 : 1);
+
+    // Surcharge : aura rouge qui pulse
+    if (!enemy.clone && enemy.phase >= 3) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = `rgba(255,59,107,${0.12 + 0.08 * Math.sin(state.time * 8)})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, size * 1.7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // Canons en étoile (Surcharge)
+    if (!enemy.clone && enemy.phase >= 3) {
+        ctx.save();
+        ctx.rotate(state.time * 0.6);
+        ctx.strokeStyle = "#ff2bd6";
+        ctx.shadowColor = "#ff2bd6";
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = "rgba(20,0,12,0.9)";
+        ctx.lineWidth = 2;
+        for (let k = 0; k < 8; k += 1) {
+            ctx.save();
+            ctx.rotate((Math.PI * 2 * k) / 8);
+            ctx.fillRect(0, -size * 0.14, size * 1.25, size * 0.28);
+            ctx.strokeRect(0, -size * 0.14, size * 1.25, size * 0.28);
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+
+    // Canons principaux
+    ctx.save();
+    ctx.rotate(aim);
+    ctx.strokeStyle = cannonColor;
+    ctx.shadowColor = cannonColor;
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = "rgba(20,0,12,0.92)";
+    ctx.lineWidth = 3 * Math.max(0.6, scale);
+    const length = size * 1.75 - (enemy.recoil || 0) * size * 0.2;
+    const width = size * (enemy.clone ? 0.6 : 0.42);
+    for (let k = 0; k < cannons; k += 1) {
+        ctx.save();
+        ctx.rotate((k - (cannons - 1) / 2) * 0.2);
+        ctx.fillRect(0, -width / 2, length, width);
+        ctx.strokeRect(0, -width / 2, length, width);
+        ctx.restore();
+    }
+    ctx.restore();
+
+    // Corps
+    ctx.strokeStyle = body;
+    ctx.shadowColor = enemy.color;
+    ctx.shadowBlur = 26;
+    ctx.lineWidth = enemy.clone ? 2.5 : 4;
+    ctx.fillStyle = flashing ? "rgba(255,255,255,0.8)" : "rgba(30,0,14,0.88)";
+    ctx.beginPath();
+    ctx.arc(0, 0, size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Glitch : double cyan décalé de temps en temps
+    if (Math.sin(state.time * 13) > 0.85 || enemy.dash) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.strokeStyle = "rgba(45,226,255,0.7)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(4, -2, size, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = body;
+    ctx.globalAlpha *= 0.9;
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Couronne (comme ton tank Légende)
+    if (!enemy.clone) {
+        const spikes = enemy.phase >= 3 ? 10 : 6;
+        ctx.save();
+        ctx.rotate(state.time * 0.5);
+        ctx.fillStyle = "#2de2ff";
+        ctx.shadowColor = "#2de2ff";
+        ctx.shadowBlur = 14;
+        for (let k = 0; k < spikes; k += 1) {
+            ctx.save();
+            ctx.rotate((Math.PI * 2 * k) / spikes);
+            ctx.beginPath();
+            ctx.moveTo(size + 18, 0);
+            ctx.lineTo(size + 8, -6);
+            ctx.lineTo(size + 8, 6);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+    ctx.restore();
+
+    // Bouclier volé : bulle hexagonale
+    if (enemy.bubbleHp > 0) {
+        ctx.save();
+        ctx.strokeStyle = "#8ef0ff";
+        ctx.shadowColor = "#8ef0ff";
+        ctx.shadowBlur = 20;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.4 + 0.5 * (enemy.bubbleHp / enemy.bubbleMax);
+        ctx.fillStyle = "rgba(142,240,255,0.08)";
+        polygonPath(ctx, 6, size + 26, state.time * 0.8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Nova en charge : un anneau qui se resserre
+    const atk = enemy.attackState;
+    if (atk && atk.type === "nova") {
+        const q = 1 - atk.t / atk.max;
+        ctx.save();
+        ctx.strokeStyle = "#ffffff";
+        ctx.shadowColor = "#ffffff";
+        ctx.shadowBlur = 18;
+        ctx.lineWidth = 2 + q * 4;
+        ctx.globalAlpha = 0.4 + 0.5 * Math.abs(Math.sin(state.time * 20));
+        ctx.setLineDash([12, 8]);
+        ctx.beginPath();
+        ctx.arc(0, 0, atk.r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.25 + q * 0.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, size + (atk.r - size) * (1 - q), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+// Intro de la Salle des Miroirs : des éclats de miroir s'assemblent et ton
+// reflet se détache de toi, puis vire au rouge.
+function drawNemesisIntro(cx, cy) {
+    const t = state.phaseTime;
+    const p = Math.min(1, t / ARENA_INTRO);
+    const w = canvas.width;
+    const h = canvas.height;
+    const tx = w / 2;
+    const ty = h * 0.35;
+    ctx.save();
+    ctx.fillStyle = `rgba(0,0,0,${0.35 * Math.min(1, t)})`;
+    ctx.fillRect(0, 0, w, h);
+
+    // Éclats de miroir qui volent vers un grand hexagone
+    const hexR = Math.min(w, h) * 0.42;
+    const shardP = Math.min(1, t / 2.2);
+    const shardEase = 1 - Math.pow(1 - shardP, 3);
+    ctx.globalCompositeOperation = "lighter";
+    for (let k = 0; k < 18; k += 1) {
+        const a = (Math.PI * 2 * k) / 18;
+        const endX = w / 2 + Math.cos(a) * hexR;
+        const endY = h / 2 + Math.sin(a) * hexR;
+        const startX = w / 2 + Math.cos(a + 1.2) * w;
+        const startY = h / 2 + Math.sin(a + 1.2) * h;
+        const x = startX + (endX - startX) * shardEase;
+        const y = startY + (endY - startY) * shardEase;
+        const color = k % 2 ? "#2de2ff" : "#ff3b6b";
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(a + (1 - shardEase) * 6);
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 14;
+        ctx.globalAlpha = 0.3 + 0.6 * shardEase;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, -12);
+        ctx.lineTo(9, 10);
+        ctx.lineTo(-9, 10);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+    }
+    if (shardP >= 1) {
+        ctx.strokeStyle = "#2de2ff";
+        ctx.shadowColor = "#2de2ff";
+        ctx.shadowBlur = 20;
+        ctx.globalAlpha = Math.min(0.6, (t - 2.2) * 0.8) * (0.7 + 0.3 * Math.sin(t * 20));
+        ctx.lineWidth = 2;
+        ctx.save();
+        ctx.translate(w / 2, h / 2);
+        polygonPath(ctx, 6, hexR, 0);
+        ctx.stroke();
+        ctx.restore();
+        // Axe du miroir
+        ctx.setLineDash([16, 12]);
+        ctx.beginPath();
+        ctx.moveTo(w / 2, 0);
+        ctx.lineTo(w / 2, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // Ton reflet se détache et glisse jusqu'à sa place
+    if (t > 1.2) {
+        const q = Math.min(1, (t - 1.2) / 2.6);
+        const e = q < 0.5 ? 2 * q * q : 1 - Math.pow(-2 * q + 2, 2) / 2;
+        const x = player.x + (tx - player.x) * e;
+        const y = player.y + (ty - player.y) * e;
+        const r = player.radius + (46 - player.radius) * e;
+        const color = q < 0.5 ? "#2de2ff" : "#ff3b6b";
+        const jitter = Math.random() < 0.3 ? (Math.random() - 0.5) * 10 : 0;
+        ctx.globalAlpha = 0.35 + 0.6 * q;
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 24;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x + jitter, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = q < 0.5 ? "#ff3b6b" : "#2de2ff";
+        ctx.globalAlpha *= 0.5;
+        ctx.beginPath();
+        ctx.arc(x - jitter + 3, y - 2, r, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    const alpha = t < 0.4 ? t / 0.4 : t > ARENA_INTRO - 0.5 ? Math.max(0, (ARENA_INTRO - t) / 0.5) : 1;
+    const jitter = Math.random() < 0.15 ? (Math.random() - 0.5) * 8 : 0;
+    const titleSize = Math.min(40, canvas.width / 18);
+    drawNeonText("⚠ ARÈNE SECRÈTE ⚠", cx, cy + 40, 12, "#2de2ff", alpha);
+    drawNeonText("NÉMÉSIS", cx + jitter + 3, cy + 90, titleSize, "#2de2ff", alpha * 0.5);
+    drawNeonText("NÉMÉSIS", cx + jitter - 3, cy + 90, titleSize, "#ff3b6b", alpha * 0.5);
+    drawNeonText("NÉMÉSIS", cx, cy + 90, titleSize, "#ffffff", alpha);
+    drawNeonText("Ton reflet connaît tous tes pouvoirs.", cx, cy + 130, 9, "#ffe45e", alpha);
+    if (state.upgradePoints > 0) {
+        drawNeonText(`${state.upgradePoints} points à dépenser : touches 1 à 0`, cx, cy + 160, 8, "#5dffa8", alpha);
+    }
+}
+
+// Fond de la Salle des Miroirs : axes du miroir et grand hexagone.
+function drawMirrorHall(g, width, height) {
+    g.save();
+    g.strokeStyle = "rgba(45,226,255,0.22)";
+    g.shadowColor = "#2de2ff";
+    g.shadowBlur = 10;
+    g.lineWidth = 2;
+    g.setLineDash([16, 12]);
+    g.beginPath();
+    g.moveTo(width / 2, 0);
+    g.lineTo(width / 2, height);
+    g.moveTo(0, height / 2);
+    g.lineTo(width, height / 2);
+    g.stroke();
+    g.setLineDash([]);
+    g.strokeStyle = "rgba(255,59,107,0.18)";
+    g.translate(width / 2, height / 2);
+    polygonPath(g, 6, Math.min(width, height) * 0.42, 0);
+    g.stroke();
+    polygonPath(g, 6, Math.min(width, height) * 0.2, Math.PI / 6);
+    g.stroke();
+    g.restore();
+}
+
 // Lasers : avertissement (ligne fine) puis rayon qui brûle tant qu'on est dedans.
 function beamOrigin(enemy, beam) {
     if (beam.orbit) {
@@ -3649,6 +4268,14 @@ function updateBeams(enemy, dt) {
             // Plus de temps pour réagir dans les difficultés faciles
             beam.tuned = true;
             beam.warn = Math.max(0.35, beam.warn + (enemy.warnBonus || 0));
+        }
+        if (beam.track) {
+            // Laser prisme de Némésis : il te suit pendant l'alerte, se fige
+            // juste avant de tirer, puis te poursuit lentement.
+            const o = beamOrigin(enemy, beam);
+            const want = Math.atan2(player.y - o.y, player.x - o.x) + (beam.offset || 0);
+            const rate = beam.warn > 0.3 ? 3 : beam.warn > 0 ? 0 : beam.track;
+            beam.angle = turnToward(beam.angle, want, rate * dt);
         }
         if (beam.orbit) beam.orbit.a += beam.orbit.speed * dt;
         if (beam.warn > 0) {
@@ -3830,6 +4457,8 @@ function updateEnemies(dt) {
                     spawnEnemyProjectile(enemy, a, { speed: 280, damage: 9 });
                 }
             }
+        } else if (behavior === "mirrorClone") {
+            updateMirrorClone(enemy, dt);
         } else if (behavior.startsWith("boss")) {
             updateBoss(enemy, behavior, dx, dy, dist, dt);
         } else {
@@ -4015,6 +4644,7 @@ function buildArenaBackground() {
     g.fillStyle = grad;
     g.fillRect(0, 0, off.width, off.height);
     drawArenaGrid(g, off.width, off.height, sector, 1);
+    if (sector.boss === "nemesis") drawMirrorHall(g, off.width, off.height);
     return off;
 }
 
@@ -4190,6 +4820,21 @@ function drawPlayer() {
         ctx.restore();
     }
 
+    // Ralenti de Némésis : une horloge violette autour de toi
+    if (state.playerSlow > 0) {
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.strokeStyle = "#9b5cff";
+        ctx.shadowColor = "#9b5cff";
+        ctx.shadowBlur = 14;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius + 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, state.playerSlow / 2.5));
+        ctx.stroke();
+        ctx.restore();
+    }
+
     // Réticule de visée
     if (!state.trackpadMode && mouse.active && state.phase === "playing") {
         ctx.save();
@@ -4339,7 +4984,7 @@ function drawBossTelegraphs(enemy) {
         ctx.stroke();
     }
     ctx.restore();
-    drawBossSpecials(enemy);
+    if (enemy.shape !== "tank") drawBossSpecials(enemy);
     ctx.save();
     if (atk && atk.type === "blink") {
         ctx.strokeStyle = enemy.color;
@@ -4447,18 +5092,23 @@ function drawEnemies() {
         const flashing = enemy.hitFlash > 0;
         ctx.save();
         ctx.translate(enemy.x, enemy.y);
-        ctx.save();
-        traceEnemyShape(enemy, size);
-        ctx.fillStyle = flashing ? "rgba(255,255,255,0.85)" : `rgba(${hexToRgb(enemy.color)},0.18)`;
-        const tint = enemy.rainbow ? `hsl(${(state.time * 140) % 360}, 100%, 65%)` : enemy.color;
-        ctx.strokeStyle = flashing ? "#ffffff" : tint;
-        ctx.shadowColor = tint;
-        ctx.shadowBlur = enemy.isBoss ? 28 : 14;
-        ctx.lineWidth = enemy.isBoss ? 4 : 2.5;
-        ctx.globalAlpha = spawn;
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
+        if (enemy.shape === "tank") {
+            if (enemy.isBoss) drawBossSpecials(enemy); // lasers sous le tank
+            drawMirrorTank(enemy, size, flashing, spawn);
+        } else {
+            ctx.save();
+            traceEnemyShape(enemy, size);
+            ctx.fillStyle = flashing ? "rgba(255,255,255,0.85)" : `rgba(${hexToRgb(enemy.color)},0.18)`;
+            const tint = enemy.rainbow ? `hsl(${(state.time * 140) % 360}, 100%, 65%)` : enemy.color;
+            ctx.strokeStyle = flashing ? "#ffffff" : tint;
+            ctx.shadowColor = tint;
+            ctx.shadowBlur = enemy.isBoss ? 28 : 14;
+            ctx.lineWidth = enemy.isBoss ? 4 : 2.5;
+            ctx.globalAlpha = spawn;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
 
         if (enemy.isBoss) {
             // Anneau tournant + drones du Spectre
@@ -4716,7 +5366,8 @@ function drawOverlayTexts() {
     const sector = getSector();
 
     if (state.phase === "playing" && state.sectorPhase === "intro" && sector.arena) {
-        drawArenaIntro(cx, cy);
+        if (sector.boss === "nemesis") drawNemesisIntro(cx, cy);
+        else drawArenaIntro(cx, cy);
     } else if (state.phase === "playing" && state.sectorPhase === "intro") {
         const t = state.phaseTime;
         const alpha = t < 0.3 ? t / 0.3 : t > 2 ? Math.max(0, 1 - (t - 2) / 0.4) : 1;
@@ -4761,7 +5412,10 @@ function drawOverlayTexts() {
         [0.66, 0.33].forEach((r) => ctx.fillRect(x + w * r - 1, y - 2, 2, 12));
         if (boss.phase > 1) {
             ctx.fillStyle = "#ff3b6b";
-            ctx.fillText(boss.phase === 3 ? "FUREUR" : "ENRAGÉ", cx, y + 22);
+            const phaseName = boss.behavior === "bossNemesis"
+                ? (boss.phase === 3 ? "SURCHARGE" : "MIROIRS")
+                : (boss.phase === 3 ? "FUREUR" : "ENRAGÉ");
+            ctx.fillText(phaseName, cx, y + 22);
         }
         ctx.restore();
     }
@@ -4941,6 +5595,7 @@ function step(delta) {
     const active = isGameplayActive();
     if (active) {
         state.time += delta;
+        if (state.playerSlow > 0) state.playerSlow = Math.max(0, state.playerSlow - delta);
         const fighting = state.sectorPhase === "fight" || state.sectorPhase === "boss";
         if (fighting) elapsedTime += delta;
         if (state.sectorPhase !== "exit") updatePlayer(delta);
