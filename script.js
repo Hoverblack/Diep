@@ -36,6 +36,7 @@ const menuOverlay = $("menuOverlay");
 const gameOverOverlay = $("gameOverOverlay");
 const controlsOverlay = $("controlsOverlay");
 const startGameButton = $("startGameButton");
+const challengeButton = $("challengeButton");
 const continueButton = $("continueButton");
 const continueLabel = $("continueLabel");
 const restartButton = $("restartButton");
@@ -562,7 +563,11 @@ const sectors = [
     { name: "Horizon Brisé", goal: 38, hue: "#ffe45e", accent: "#ff2bd6" },
     { name: "Cœur Synthwave", goal: 42, hue: "#ff5fa2", accent: "#9b5cff" },
     { name: "Soleil Noir", goal: 48, hue: "#ff3b6b", accent: "#ffe45e" },
+    // Arène secrète : aucun ennemi, seulement le Prisme Noir.
+    { name: "Arène Prismatique", goal: 1, hue: "#ffffff", accent: "#ff2bd6", arena: true, boss: "blackprism" },
 ];
+
+const ARENA_SECTOR = 8;
 
 function getSector(index = state.sectorIndex) {
     if (index < sectors.length) return { ...sectors[index], infinite: false };
@@ -893,7 +898,36 @@ const enemyArchetypes = [
         behavior: "shooterDouble",
         weightByDifficulty: [0.02, 0.05, 0.08, 0.12, 0.18, 0.7, 1.1, 1.2],
     },
+    // Mobs lasers : mini-Prismes
+    {
+        name: "Lentille",
+        minSector: 3,
+        shape: "diamond",
+        color: "#ffe45e",
+        size: 22,
+        health: 60,
+        xp: 50,
+        speed: 80,
+        behavior: "laserMob",
+        beamCount: 1,
+        weightByDifficulty: [0.12, 0.2, 0.35, 0.45, 0.55, 0.7, 0.8, 0.9],
+    },
+    {
+        name: "Kaléido",
+        minSector: 5,
+        shape: "octagon",
+        color: "#ffb35e",
+        size: 26,
+        health: 95,
+        xp: 75,
+        speed: 70,
+        behavior: "laserMob",
+        beamCount: 3,
+        weightByDifficulty: [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+    },
 ];
+
+const MAX_LASER_MOBS = 3;
 
 let waveIndex = 0;
 let specialWaveType = null;
@@ -990,7 +1024,29 @@ const bossConfigs = [
         behavior: "bossOmega",
         hpMult: 1.2, // boss final
     },
+    {
+        id: "blackprism",
+        name: "Prisme Noir",
+        shape: "diamond",
+        color: "#ffffff",
+        size: 66,
+        health: 1300,
+        xp: 700,
+        speed: 90,
+        behavior: "bossBlackPrism",
+        hpMult: 1.15,
+        rainbow: true,
+        arenaOnly: true,
+        beamFactor: 0.65, // beaucoup de lasers : chacun brûle un peu moins
+    },
 ];
+
+function pickBossConfig() {
+    const sector = getSector();
+    if (sector.boss) return bossConfigs.find((b) => b.id === sector.boss);
+    const regular = bossConfigs.filter((b) => !b.arenaOnly);
+    return regular[state.sectorIndex % regular.length];
+}
 
 function getArchetypeWeight(type, difficultyIndex) {
     if (type.weightByDifficulty && type.weightByDifficulty.length) {
@@ -1250,7 +1306,8 @@ trackpadModeToggle.addEventListener("change", (event) => {
 
 startGameButton.addEventListener("click", () => startNewGame());
 continueButton.addEventListener("click", () => continueFromSave());
-restartButton.addEventListener("click", () => startNewGame());
+restartButton.addEventListener("click", () => (state.challenge ? startChallenge() : startNewGame()));
+challengeButton.addEventListener("click", () => startChallenge());
 resumeSaveButton.addEventListener("click", () => continueFromSave());
 returnMenuButton.addEventListener("click", () => returnToMenu());
 showControlsButton.addEventListener("click", () => showOverlay(controlsOverlay));
@@ -1303,6 +1360,11 @@ function updateHUD() {
         setText(bossTimerText, "Ouvert !");
         setWidth(bossFill, 1);
         bossFill.classList.add("full");
+    } else if (getSector().arena) {
+        setText(objectiveLabel, "Arène");
+        setText(bossTimerText, "Il arrive…");
+        setWidth(bossFill, Math.min(1, state.phaseTime / ARENA_INTRO));
+        bossFill.classList.remove("full");
     } else {
         setText(objectiveLabel, "Objectif");
         setText(bossTimerText, `${state.sectorKills} / ${state.sectorGoal}`);
@@ -1487,7 +1549,22 @@ function enterPlaying() {
     updateDifficultyLockState();
 }
 
+// Défi : directement l'arène du Prisme Noir avec un tank de niveau 20.
+function startChallenge() {
+    setDifficulty(Number(menuDifficultyRange.value));
+    state.trackpadMode = trackpadModeToggle.checked;
+    resetRunState();
+    state.challenge = true;
+    state.level = 20;
+    state.upgradePoints = 20;
+    enterPlaying();
+    beginSector(ARENA_SECTOR, { save: false });
+    refreshUpgradePanel();
+    checkClassMilestones();
+}
+
 function startNewGame() {
+    state.challenge = false;
     setDifficulty(Number(menuDifficultyRange.value));
     state.trackpadMode = trackpadModeToggle.checked;
     storageSet(STORAGE_SAVE, null);
@@ -1540,12 +1617,17 @@ function beginSector(index, { save = true } = {}) {
     enemyProjectiles.length = 0;
     mines.length = 0;
     arenaBackground = null;
-    if (save) saveProgress();
+    if (getSector().arena) {
+        player.x = canvas.width / 2;
+        player.y = canvas.height * 0.78;
+    }
+    if (save && !state.challenge) saveProgress();
     if (state.phase === "playing") play("sector");
 }
 
 // Sauvegarde automatique au début de chaque secteur.
 function saveProgress() {
+    if (state.challenge) return;
     storageSet(STORAGE_SAVE, {
         difficultyIndex: state.difficultyIndex,
         allowMidgameDifficultyChange: state.allowMidgameDifficultyChange,
@@ -1567,6 +1649,7 @@ function saveProgress() {
 }
 
 function continueFromSave() {
+    state.challenge = false;
     const save = storageGet(STORAGE_SAVE);
     if (!save) {
         startNewGame();
@@ -1658,7 +1741,7 @@ function handlePlayerDeath() {
     finalSector.textContent = getSector().name;
     finalBest.textContent = formatScore(state.best);
     newRecordLine.classList.toggle("hidden", !isRecord);
-    resumeSaveButton.classList.toggle("hidden", !storageGet(STORAGE_SAVE));
+    resumeSaveButton.classList.toggle("hidden", state.challenge || !storageGet(STORAGE_SAVE));
     hideClassOverlay();
     setTimeout(() => showOverlay(gameOverOverlay), 700);
 }
@@ -2034,7 +2117,7 @@ function spawnPickup(x = null, y = null) {
 }
 
 function updatePickups(dt) {
-    pickupTimer += dt * 1000;
+    if (!getSector().arena) pickupTimer += dt * 1000; // pas de bonus dans l'arène
     const interval = pickupInterval * Math.pow(0.85, perk("lucky"));
     if (pickupTimer >= interval && pickups.length < 4) {
         pickupTimer = 0;
@@ -2250,7 +2333,18 @@ function updateBossPhase(enemy) {
     enemy.attackState = null;
     enemy.attackTimer = 1.6;
     bossRing(enemy, 20 + enemy.phase * 4, Math.random() * Math.PI, { speed: 200, damage: 14, radius: 7 });
-    const minions = 1 + enemy.phase;
+    const minions = getSector().arena ? 0 : 1 + enemy.phase;
+    if (getSector().arena) {
+        // Pas de bonus dans l'arène : un petit soin à chaque phase à la place.
+        player.health = Math.min(player.maxHealth, player.health + player.maxHealth * 0.3);
+        floatText(player.x, player.y - 40, "+30 % PV", "#5dffa8", 11);
+    }
+    if (enemy.behavior === "bossBlackPrism") {
+        // Supernova : étoile de lasers depuis le cœur
+        for (let k = 0; k < 16; k += 1) {
+            enemy.beams.push({ angle: (Math.PI / 8) * k + enemy.phase * 0.2, spin: 0, warn: 0.7, fire: 0.35, width: 12, hue: k * 22, loud: k === 0 });
+        }
+    }
     for (let k = 0; k < minions && enemies.length < getMaxEnemies() + 4; k += 1) spawnEnemy();
     ring(enemy.x, enemy.y, "#ff3b6b", enemy.size * 5, 0.7, 5);
     floatText(enemy.x, enemy.y - enemy.size - 24, enemy.phase === 3 ? "FUREUR !" : "ENRAGÉ !", "#ff3b6b", 14);
@@ -2262,7 +2356,7 @@ function updateBossPhase(enemy) {
 function spawnEnemy(isBoss = false) {
     const diff = getDifficultyConfig();
     if (isBoss) {
-        const boss = bossConfigs[state.sectorIndex % bossConfigs.length];
+        const boss = pickBossConfig();
         const levelFactor = 1 + state.level * 0.06;
         const scaling = (levelFactor + bossCount * 0.25) * sectorHealthMult();
         const bossHealthBoost = diff.enemyHealthMultiplier * (1.5 + state.sectorIndex * 0.3);
@@ -2270,7 +2364,9 @@ function spawnEnemy(isBoss = false) {
         // un certain temps même face à un tank surpuissant.
         const toughness = Math.min(1.8, Math.max(0.7, diff.enemyHealthMultiplier));
         const minFightSeconds = (12 + state.sectorIndex * 3.5) * toughness;
-        const spawn = pickSpawnPoint(boss.size);
+        const spawn = getSector().arena
+            ? { x: canvas.width / 2, y: canvas.height * 0.35 }
+            : pickSpawnPoint(boss.size);
         const health =
             Math.max(boss.health * scaling * bossHealthBoost, estimatePlayerDps() * minFightSeconds) *
             (boss.hpMult || 1);
@@ -2306,6 +2402,9 @@ function spawnEnemy(isBoss = false) {
     }
 
     let pool = enemyArchetypes.filter((e) => (e.minSector || 0) <= state.sectorIndex);
+    if (enemies.filter((e) => e.behavior === "laserMob").length >= MAX_LASER_MOBS) {
+        pool = pool.filter((e) => e.behavior !== "laserMob");
+    }
     if (specialWaveType === "hexOnly") {
         const hexPool = pool.filter((e) => e.shape === "hex");
         if (hexPool.length > 0) pool = hexPool;
@@ -2333,6 +2432,9 @@ function spawnEnemy(isBoss = false) {
         speed,
         xp: xpReward,
         shootTimer: 600 + Math.random() * 600,
+        beams: [],
+        laserTimer: 1.5 + Math.random() * 1.5,
+        bulletDamage: 0.5 * sectorDamageMult(),
         visualAngle: 0,
         hitFlash: 0,
         spawnAnim: 0,
@@ -2810,6 +2912,7 @@ function updateDrones(dt) {
 
 function updateSpawning(dt) {
     if (state.sectorPhase !== "fight" && state.sectorPhase !== "boss") return;
+    if (getSector().arena) return; // l'arène : lui et toi, personne d'autre
     enemySpawnTimer += dt * 1000;
     let guard = 0;
     while (enemySpawnTimer >= getSpawnInterval() && guard < 10) {
@@ -3124,37 +3227,173 @@ function updateBoss(enemy, behavior, dx, dy, dist, dt) {
                 }
             }
         }
+    } else if (behavior === "bossBlackPrism") {
+        updateBlackPrism(enemy, dx, dy, dt, rage);
     }
     updateBeams(enemy, dt);
 }
 
+// Prisme Noir : le Prisme en furie, seul dans son arène. Il enchaîne
+// rosaces, tenailles et grilles de lasers ; en fureur, deux éclats
+// satellites balaient l'arène sans arrêt.
+function updateBlackPrism(enemy, dx, dy, dt, rage) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const tx = w / 2 + Math.cos(state.time * 0.5) * w * 0.22;
+    const ty = h / 2 + Math.sin(state.time * 0.8) * h * 0.18;
+    const mx = tx - enemy.x;
+    const my = ty - enemy.y;
+    const md = Math.hypot(mx, my) || 1;
+    enemy.x += (mx / md) * Math.min(md, enemy.speed * dt);
+    enemy.y += (my / md) * Math.min(md, enemy.speed * dt);
+
+    const mainBeams = enemy.beams.filter((b) => !b.orbit);
+    if (mainBeams.length === 0 && enemy.attackTimer <= 0) {
+        const patterns = ["rosace", "tenaille", "grille"];
+        enemy.pattern = ((enemy.pattern ?? -1) + 1) % patterns.length;
+        const kind = patterns[enemy.pattern];
+        const aim = Math.atan2(dy, dx);
+        if (kind === "rosace") {
+            // Rosace : 6 / 8 / 10 lasers qui tournent (et s'inversent en phase 2+)
+            const count = 4 + enemy.phase * 2;
+            const spin = (Math.random() < 0.5 ? -1 : 1) * (0.55 + enemy.phase * 0.12);
+            for (let k = 0; k < count; k += 1) {
+                enemy.beams.push({
+                    angle: aim + Math.PI / count + ((Math.PI * 2) / count) * k,
+                    spin,
+                    warn: 0.9,
+                    fire: 2.2 + enemy.phase * 0.3,
+                    width: 15,
+                    hue: (360 / count) * k,
+                    loud: k === 0,
+                    flipAt: enemy.phase >= 2 ? 1.1 : 0,
+                });
+            }
+            enemy.attackTimer = 1.4;
+        } else if (kind === "tenaille") {
+            // Tenaille : des paires de lasers qui se referment sur le joueur
+            const pairs = enemy.phase >= 2 ? 2 : 1;
+            for (let p = 0; p < pairs; p += 1) {
+                const open = 1.3 + p * 0.5;
+                const speed = 1.15 + p * 0.25;
+                const fire = open / speed + 0.5;
+                enemy.beams.push({ angle: aim - open, spin: speed, warn: 0.75, fire, width: 14, hue: 300 + p * 40, loud: p === 0 });
+                enemy.beams.push({ angle: aim + open, spin: -speed, warn: 0.75, fire, width: 14, hue: 180 + p * 40 });
+            }
+            // + une salve de diamants visée pendant que ça se referme
+            const a = leadAngle(enemy, 360);
+            for (let k = -2; k <= 2; k += 1) bossShot(enemy, a + k * 0.12, { speed: 360, damage: 12, color: "#ffffff" });
+            enemy.attackTimer = 1.2;
+        } else {
+            // Grille : lasers verticaux (puis horizontaux) depuis les bords, avec un trou
+            const cols = 7;
+            const gap = Math.floor(Math.random() * cols);
+            for (let k = 0; k < cols; k += 1) {
+                if (k === gap) continue;
+                const x = (w / cols) * (k + 0.5);
+                enemy.beams.push({ ox: x, oy: -10, angle: Math.PI / 2, spin: 0, warn: 1.0, fire: 0.7, width: 22, hue: k * 50, len: h + 40, loud: k === 0 });
+            }
+            if (enemy.phase >= 3) {
+                const rows = 5;
+                const gapRow = Math.floor(Math.random() * rows);
+                for (let k = 0; k < rows; k += 1) {
+                    if (k === gapRow) continue;
+                    const y = (h / rows) * (k + 0.5);
+                    enemy.beams.push({ ox: -10, oy: y, angle: 0, spin: 0, warn: 1.6, fire: 0.7, width: 22, hue: 200 + k * 30, len: w + 40 });
+                }
+            }
+            enemy.attackTimer = 1.0;
+        }
+    }
+
+    // En fureur : deux éclats satellites qui balaient sans arrêt.
+    if (enemy.phase >= 3 && !enemy.beams.some((b) => b.orbit)) {
+        for (let k = 0; k < 2; k += 1) {
+            enemy.beams.push({
+                orbit: { r: 190, a: Math.PI * k, speed: 0.9 },
+                angle: Math.PI * k + Math.PI / 2,
+                spin: -0.8,
+                warn: 1.2,
+                fire: 9999,
+                width: 9,
+                hue: 120 + k * 180,
+                len: 900,
+            });
+        }
+    }
+
+    // Anneaux de diamants arc-en-ciel entre deux motifs
+    if (enemy.shootTimer <= 0) {
+        enemy.shootTimer = 1400 / rage;
+        enemy.spin = (enemy.spin || 0) + 0.35;
+        const count = 10 + enemy.phase * 2;
+        for (let k = 0; k < count; k += 1) {
+            bossShot(enemy, enemy.spin + ((Math.PI * 2) / count) * k, {
+                speed: 190,
+                damage: 11,
+                color: `hsl(${(360 / count) * k}, 100%, 65%)`,
+            });
+        }
+    }
+}
+
 // Lasers : avertissement (ligne fine) puis rayon qui brûle tant qu'on est dedans.
+function beamOrigin(enemy, beam) {
+    if (beam.orbit) {
+        return {
+            x: enemy.x + Math.cos(beam.orbit.a) * beam.orbit.r,
+            y: enemy.y + Math.sin(beam.orbit.a) * beam.orbit.r,
+        };
+    }
+    if (beam.ox !== undefined) return { x: beam.ox, y: beam.oy };
+    return { x: enemy.x, y: enemy.y };
+}
+
 function updateBeams(enemy, dt) {
     if (!enemy.beams || enemy.beams.length === 0) return;
     for (let i = enemy.beams.length - 1; i >= 0; i -= 1) {
         const beam = enemy.beams[i];
+        if (beam.orbit) beam.orbit.a += beam.orbit.speed * dt;
         if (beam.warn > 0) {
             beam.warn -= dt;
+            if (beam.warn <= 0 && beam.loud) {
+                shake(6);
+                play("hit", 80);
+            }
             continue;
         }
         beam.fire -= dt;
+        beam.age = (beam.age || 0) + dt;
+        // Le Prisme Noir inverse parfois la rotation en plein tir.
+        if (beam.flipAt && beam.age >= beam.flipAt) {
+            beam.spin = -beam.spin * 1.3;
+            beam.flipAt = 0;
+        }
         beam.angle += beam.spin * dt;
         if (beam.fire <= 0) {
             enemy.beams.splice(i, 1);
             continue;
         }
-        const px = player.x - enemy.x;
-        const py = player.y - enemy.y;
+        const o = beamOrigin(enemy, beam);
+        const px = player.x - o.x;
+        const py = player.y - o.y;
         const along = px * Math.cos(beam.angle) + py * Math.sin(beam.angle);
         const perp = Math.abs(-px * Math.sin(beam.angle) + py * Math.cos(beam.angle));
-        if (along > 0 && perp < beam.width + player.radius * 0.7) {
-            applyPlayerDamage(60 * enemy.bulletDamage * dt, { feedback: false });
+        if (along > 0 && along < (beam.len || Infinity) && perp < beam.width + player.radius * 0.7) {
+            applyPlayerDamage(60 * enemy.bulletDamage * (enemy.beamFactor || 1) * dt, { feedback: false });
             if (Math.random() < dt * 8) {
-                burst(player.x, player.y, enemy.color, 4, 160, 2);
+                burst(player.x, player.y, beamColor(enemy, beam), 4, 160, 2);
                 shake(2);
             }
         }
     }
+}
+
+// Couleur d'un laser : arc-en-ciel pour le Prisme Noir.
+function beamColor(enemy, beam) {
+    if (!enemy.rainbow) return enemy.color;
+    const hue = (state.time * 140 + (beam.hue || 0)) % 360;
+    return `hsl(${hue}, 100%, 62%)`;
 }
 
 // Bouclier du Bastion : bloque les tirs qui arrivent de face.
@@ -3254,6 +3493,32 @@ function updateEnemies(dt) {
                 spawnEnemyProjectile(enemy, angle - spread, { speed: 270, damage: 11 });
                 spawnEnemyProjectile(enemy, angle + spread, { speed: 270, damage: 11 });
             }
+        } else if (behavior === "laserMob") {
+            // Se place à distance, s'immobilise, prévient puis tire son laser.
+            const busy = enemy.beams.length > 0;
+            if (!busy) {
+                const desired = 320;
+                const moveDir = dist > desired ? 1 : dist < desired * 0.7 ? -1 : 0;
+                enemy.x += (dx / dist) * enemy.speed * moveDir * dt;
+                enemy.y += (dy / dist) * enemy.speed * moveDir * dt;
+                enemy.laserTimer -= dt;
+            }
+            if (!busy && enemy.laserTimer <= 0 && dist < 650) {
+                enemy.laserTimer = 3 + Math.random() * 1.5;
+                const aim = Math.atan2(dy, dx);
+                if (enemy.beamCount === 1) {
+                    enemy.beams.push({ angle: aim, spin: 0, warn: 0.9, fire: 0.45, width: 7, len: 700 });
+                } else {
+                    const spin = Math.random() < 0.5 ? -0.7 : 0.7;
+                    for (let k = 0; k < enemy.beamCount; k += 1) {
+                        enemy.beams.push({
+                            angle: aim + ((Math.PI * 2) / enemy.beamCount) * k - spin * 0.4,
+                            spin, warn: 1.0, fire: 1.1, width: 7, len: 520,
+                        });
+                    }
+                }
+            }
+            updateBeams(enemy, dt);
         } else if (behavior === "shooterSix") {
             const desired = 420;
             const moveDir = dist > desired ? 1 : dist < desired * 0.7 ? -1 : 0;
@@ -3361,9 +3626,18 @@ function updateCombo(dt) {
     }
 }
 
+const ARENA_INTRO = 4.6;
+
 function updateSectorFlow(dt) {
     state.phaseTime += dt;
-    if (state.sectorPhase === "intro" && state.phaseTime >= 2.4) {
+    if (state.sectorPhase === "intro" && getSector().arena) {
+        if (state.phaseTime >= ARENA_INTRO) {
+            state.phaseTime = 0;
+            startBossPhase();
+            shake(20);
+            flash("255,255,255", 0.8);
+        }
+    } else if (state.sectorPhase === "intro" && state.phaseTime >= 2.4) {
         state.sectorPhase = "fight";
         state.phaseTime = 0;
         // Quelques ennemis d'entrée pour lancer l'action
@@ -3403,6 +3677,11 @@ function updateSectorFlow(dt) {
         player.exitScale = 1 - t;
         if (state.phaseTime >= 1.1) {
             player.exitScale = 0;
+            if (state.challenge) {
+                recordBest();
+                returnToMenu();
+                return;
+            }
             state.sectorPhase = "cards";
             state.phaseTime = 0;
             showCardOverlay();
@@ -3761,14 +4040,30 @@ function drawBossTelegraphs(enemy) {
 // Lasers, bouclier et puits de gravité (repère centré sur le boss).
 function drawBossSpecials(enemy) {
     (enemy.beams || []).forEach((beam) => {
-        const len = Math.hypot(canvas.width, canvas.height);
-        const ex = Math.cos(beam.angle) * len;
-        const ey = Math.sin(beam.angle) * len;
+        const len = beam.len || Math.hypot(canvas.width, canvas.height) * 1.2;
+        const o = beamOrigin(enemy, beam);
+        const sx = o.x - enemy.x;
+        const sy = o.y - enemy.y;
+        const ex = sx + Math.cos(beam.angle) * len;
+        const ey = sy + Math.sin(beam.angle) * len;
+        const color = beamColor(enemy, beam);
         ctx.save();
-        ctx.strokeStyle = enemy.color;
-        ctx.shadowColor = enemy.color;
+        if (beam.orbit) {
+            // Éclat satellite qui émet le laser
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 18;
+            ctx.save();
+            ctx.translate(sx, sy);
+            ctx.rotate(state.time * 4);
+            polygonPath(ctx, 4, 12, 0);
+            ctx.fill();
+            ctx.restore();
+        }
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
         ctx.beginPath();
-        ctx.moveTo(0, 0);
+        ctx.moveTo(sx, sy);
         ctx.lineTo(ex, ey);
         if (beam.warn > 0) {
             ctx.globalAlpha = 0.35 + 0.35 * Math.sin(state.time * 30);
@@ -3820,6 +4115,14 @@ function drawBossSpecials(enemy) {
 }
 
 function drawEnemies() {
+    // Lasers des mobs d'abord, sous les formes
+    enemies.forEach((enemy) => {
+        if (enemy.isBoss || !enemy.beams || !enemy.beams.length) return;
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        drawBossSpecials(enemy);
+        ctx.restore();
+    });
     enemies.forEach((enemy) => {
         const spawn = enemy.spawnAnim ?? 1;
         const size = enemy.size * (0.4 + 0.6 * (1 - Math.pow(1 - spawn, 3)));
@@ -3829,8 +4132,9 @@ function drawEnemies() {
         ctx.save();
         traceEnemyShape(enemy, size);
         ctx.fillStyle = flashing ? "rgba(255,255,255,0.85)" : `rgba(${hexToRgb(enemy.color)},0.18)`;
-        ctx.strokeStyle = flashing ? "#ffffff" : enemy.color;
-        ctx.shadowColor = enemy.color;
+        const tint = enemy.rainbow ? `hsl(${(state.time * 140) % 360}, 100%, 65%)` : enemy.color;
+        ctx.strokeStyle = flashing ? "#ffffff" : tint;
+        ctx.shadowColor = tint;
         ctx.shadowBlur = enemy.isBoss ? 28 : 14;
         ctx.lineWidth = enemy.isBoss ? 4 : 2.5;
         ctx.globalAlpha = spawn;
@@ -4029,12 +4333,73 @@ function drawNeonText(text, x, y, size, color, alpha = 1) {
     ctx.restore();
 }
 
+// Intro de l'arène : des éclats de lumière convergent et forment le Prisme Noir.
+function drawArenaIntro(cx, cy) {
+    const t = state.phaseTime;
+    const p = Math.min(1, t / ARENA_INTRO);
+    const eased = 1 - Math.pow(1 - p, 2);
+    const tx = canvas.width / 2;
+    const ty = canvas.height * 0.35;
+    const reach = Math.hypot(canvas.width, canvas.height) * 0.7;
+    ctx.save();
+    ctx.fillStyle = `rgba(0,0,0,${0.35 * Math.min(1, t)})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = "lighter";
+    for (let k = 0; k < 18; k += 1) {
+        const a = (Math.PI * 2 * k) / 18 + t * 0.6;
+        const r = reach * (1 - eased) + 10;
+        const x = tx + Math.cos(a) * r;
+        const y = ty + Math.sin(a) * r;
+        const color = `hsl(${(k * 20 + t * 120) % 360}, 100%, 62%)`;
+        ctx.strokeStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 16;
+        ctx.globalAlpha = 0.25 + 0.75 * p;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - Math.cos(a) * 60 * (1 - eased), y - Math.sin(a) * 60 * (1 - eased));
+        ctx.stroke();
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(t * 5 + k);
+        polygonPath(ctx, 4, 7, 0);
+        ctx.stroke();
+        ctx.restore();
+    }
+    // Cœur qui gonfle juste avant l'apparition
+    if (p > 0.7) {
+        const q = (p - 0.7) / 0.3;
+        ctx.globalAlpha = q;
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowColor = "#ffffff";
+        ctx.shadowBlur = 40;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 8 + q * 50, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
+
+    const alpha = t < 0.4 ? t / 0.4 : t > ARENA_INTRO - 0.5 ? Math.max(0, (ARENA_INTRO - t) / 0.5) : 1;
+    const jitter = Math.random() < 0.15 ? (Math.random() - 0.5) * 8 : 0;
+    drawNeonText("⚠ ARÈNE SECRÈTE ⚠", cx, cy + 40, 12, "#ff2bd6", alpha);
+    drawNeonText("PRISME NOIR", cx + jitter + 3, cy + 90, Math.min(40, canvas.width / 18), "#2de2ff", alpha * 0.5);
+    drawNeonText("PRISME NOIR", cx + jitter - 3, cy + 90, Math.min(40, canvas.width / 18), "#ff2bd6", alpha * 0.5);
+    drawNeonText("PRISME NOIR", cx, cy + 90, Math.min(40, canvas.width / 18), "#ffffff", alpha);
+    drawNeonText("Aucun renfort. Seulement lui.", cx, cy + 130, 9, "#ffe45e", alpha);
+    if (state.upgradePoints > 0) {
+        drawNeonText(`${state.upgradePoints} points à dépenser : touches 1 à 0`, cx, cy + 160, 8, "#5dffa8", alpha);
+    }
+}
+
 function drawOverlayTexts() {
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
     const sector = getSector();
 
-    if (state.phase === "playing" && state.sectorPhase === "intro") {
+    if (state.phase === "playing" && state.sectorPhase === "intro" && sector.arena) {
+        drawArenaIntro(cx, cy);
+    } else if (state.phase === "playing" && state.sectorPhase === "intro") {
         const t = state.phaseTime;
         const alpha = t < 0.3 ? t / 0.3 : t > 2 ? Math.max(0, 1 - (t - 2) / 0.4) : 1;
         const slide = t < 0.4 ? (1 - t / 0.4) * 60 : 0;
@@ -4261,7 +4626,8 @@ function step(delta) {
         const fighting = state.sectorPhase === "fight" || state.sectorPhase === "boss";
         if (fighting) elapsedTime += delta;
         if (state.sectorPhase !== "exit") updatePlayer(delta);
-        if (fighting || state.sectorPhase === "intro") shoot();
+        const arenaIntro = state.sectorPhase === "intro" && getSector().arena;
+        if (fighting || (state.sectorPhase === "intro" && !arenaIntro)) shoot();
         updateProjectiles(delta);
         updateEnemyProjectiles(delta);
         if (state.sectorPhase !== "exit") updatePickups(delta);
@@ -4347,6 +4713,7 @@ window.__game = {
     damageEnemy,
     gainXP,
     startBossPhase,
+    startChallenge,
     beginSector,
     chooseClass,
     estimatePlayerDps,
