@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NEON DIEP v5.4</title>
+    <title>NEON DIEP v5.5</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
         rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=5.4" />
+    <link rel="stylesheet" href="style.css?v=5.5" />
 </head>
 <body>
     <div class="app-shell">
@@ -97,9 +97,9 @@
         <div class="crt" aria-hidden="true"></div>
         <div class="modal title-modal">
             <header class="title-header">
-                <p class="eyebrow">Mini Diep-like · v5.4</p>
+                <p class="eyebrow">Mini Diep-like · v5.5</p>
                 <h1 class="logo" data-text="NEON DIEP">NEON DIEP</h1>
-                <p class="muted">8 secteurs, une arène secrète, puis le mode infini.</p>
+                <p class="muted">8 secteurs, deux arènes secrètes, puis le mode infini.</p>
                 <p class="best-line">Record : <strong id="menuBestDisplay">0</strong></p>
             </header>
             <div class="title-actions">
@@ -110,6 +110,7 @@
                     Nouvelle partie <kbd>N</kbd>
                 </button>
                 <button id="challengeButton" class="ghost-button challenge-button">Défi : Prisme Noir</button>
+                <button id="nemesisButton" class="ghost-button nemesis-button">Défi : Némésis</button>
                 <button id="showControlsButton" class="ghost-button">Touches &amp; aides</button>
             </div>
             <section class="modal-section">
@@ -143,6 +144,15 @@
                     <span>Mode trackpad : viser avec les flèches, bouger avec ZQSD</span>
                 </label>
             </section>
+            <details class="modal-section patch-notes">
+                <summary>Patch v5.5 : Némésis, ton reflet</summary>
+                <ul class="patch-list muted">
+                    <li>Nouvelle arène secrète après le Prisme Noir : la Salle des Miroirs. Des éclats de miroir s'assemblent, ton reflet se détache de toi et vire au rouge.</li>
+                    <li>Némésis bouge et tire comme un tank, esquive tes tirs et te vole tes power-ups : Laser prisme qui te suit, Nova qui efface tes balles, Bouclier, orbes de Ralenti et Essaim de drones.</li>
+                    <li>Casse son bouclier : il est sonné et lâche un power-up. À 66 % il appelle ses reflets, qui se placent en miroir de toi. À 33 % il passe en Surcharge (couronne, canons en étoile).</li>
+                    <li>Il suit la difficulté comme les autres boss, et le bouton « Défi : Némésis » te lance direct contre lui avec un tank niveau 30, pour profiter des classes des niveaux 25 et 30.</li>
+                </ul>
+            </details>
             <details class="modal-section patch-notes">
                 <summary>Patch v5.4 : difficulté des boss, power-ups et évolutions</summary>
                 <ul class="patch-list muted">
@@ -245,6 +255,6 @@
             <div id="cardOptions" class="class-options cards"></div>
         </div>
     </div>
-    <script src="script.js?v=5.4"></script>
+    <script src="script.js?v=5.5"></script>
 </body>
 </html>

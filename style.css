@@ -847,6 +847,20 @@ input[type="range"]:disabled {
     100% { border-color: #ff2bd6; color: #ff2bd6; box-shadow: 0 0 10px rgba(255, 43, 214, 0.5); }
 }
 
+.nemesis-button {
+    border: 1px solid #ff3b6b;
+    color: #ff3b6b;
+    animation: mirror-glitch 2.4s steps(1) infinite;
+}
+
+@keyframes mirror-glitch {
+    0%, 100% { border-color: #ff3b6b; color: #ff3b6b; box-shadow: 0 0 10px rgba(255, 59, 107, 0.5); text-shadow: 2px 0 rgba(45, 226, 255, 0.6); }
+    46% { border-color: #2de2ff; color: #2de2ff; box-shadow: 0 0 10px rgba(45, 226, 255, 0.5); text-shadow: -2px 0 rgba(255, 59, 107, 0.7); }
+    50% { border-color: #ff3b6b; color: #ff3b6b; box-shadow: 0 0 14px rgba(255, 59, 107, 0.7); text-shadow: 3px 0 rgba(45, 226, 255, 0.8); }
+    54% { border-color: #ff3b6b; color: #ff3b6b; box-shadow: 0 0 10px rgba(255, 59, 107, 0.5); text-shadow: 2px 0 rgba(45, 226, 255, 0.6); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .challenge-button { animation: none; }
+    .challenge-button,
+    .nemesis-button { animation: none; }
 }
