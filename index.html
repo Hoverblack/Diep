@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NEON DIEP v5.6</title>
+    <title>NEON DIEP v5.7</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
         href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
         rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=5.6" />
+    <link rel="stylesheet" href="style.css?v=5.7" />
 </head>
 <body>
     <div class="app-shell">
@@ -105,7 +105,7 @@
         <div class="crt" aria-hidden="true"></div>
         <div class="modal title-modal">
             <header class="title-header">
-                <p class="eyebrow">Mini Diep-like · v5.6</p>
+                <p class="eyebrow">Mini Diep-like · v5.7</p>
                 <h1 class="logo" data-text="NEON DIEP">NEON DIEP</h1>
                 <p class="muted">8 secteurs, deux arènes secrètes, puis le mode infini.</p>
                 <p class="best-line">Record : <strong id="menuBestDisplay">0</strong></p>
@@ -165,6 +165,16 @@
                     <input type="range" id="sfxVolumeRange" min="0" max="100" step="5" value="80" />
                 </label>
             </section>
+            <details class="modal-section patch-notes">
+                <summary>Patch v5.7 : Némésis sort le grand jeu</summary>
+                <ul class="patch-list muted">
+                    <li>Cage miroir : un hexagone se dessine autour de toi. Sors-en pendant l'alerte, sinon il se referme : tire sur un barreau pour ouvrir une brèche, ou tiens jusqu'à ce qu'elle cède. En Surcharge, elle rétrécit.</li>
+                    <li>Miroir : un arc irisé face à toi renvoie tes balles (et bloque ton laser). Il pivote moins vite que toi : contourne-le pour le toucher.</li>
+                    <li>Copie : ses canons prennent ta couleur et il imite ton tir (nombre de balles, cadence, vitesse).</li>
+                    <li>Transposition : un lien violet vous relie, puis il échange sa place avec la tienne et tire aussitôt. En Surcharge, il enchaîne avec une Cage.</li>
+                    <li>Tout suit la difficulté : alerte plus longue, barreaux plus fragiles et cage plus courte en Jeu d'enfant ; Transposition dès la phase 2 seulement en Hard et plus. Pas de laser ni de Nova pendant que tu es en cage.</li>
+                </ul>
+            </details>
             <details class="modal-section patch-notes">
                 <summary>Patch v5.6 : musique, drones et ricochets</summary>
                 <ul class="patch-list muted">
@@ -300,6 +310,6 @@
             <div id="cardOptions" class="class-options cards"></div>
         </div>
     </div>
-    <script src="script.js?v=5.6"></script>
+    <script src="script.js?v=5.7"></script>
 </body>
 </html>
